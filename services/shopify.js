@@ -1,426 +1,268 @@
+/**
+ * Shopify API Service
+ * Handles all Shopify API interactions including draft orders, orders, and webhooks
+ */
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Phoenix Invoice Manager | Shopify Quotes to Invoices</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css">
-</head>
-<body>
-  <div class="app">
-    <!-- Sidebar -->
-    <aside class="sidebar">
-      <div class="logo">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-        </svg>
-        <span>Phoenix<br>Invoice</span>
-      </div>
+const axios = require('axios');
+
+class ShopifyService {
+  constructor() {
+    this.baseUrl = `https://${process.env.SHOPIFY_STORE_URL}/admin/api/2024-01`;
+    this.headers = {
+      'X-Shopify-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN,
+      'Content-Type': 'application/json'
+    };
+  }
+
+  /**
+   * Make authenticated request to Shopify API
+   */
+  async request(method, endpoint, data = null) {
+    try {
+      const config = {
+        method,
+        url: `${this.baseUrl}${endpoint}`,
+        headers: this.headers,
+        ...(data && { data })
+      };
       
-      <nav class="nav">
-        <a href="#" class="nav-item active" data-section="dashboard">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
-            <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
-          </svg>
-          Dashboard
-        </a>
-        <a href="#" class="nav-item" data-section="create-quote">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
-          Create Quote
-        </a>
-        <a href="#" class="nav-item" data-section="quotes">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-            <polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/>
-            <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
-          </svg>
-          Draft Quotes
-        </a>
-        <a href="#" class="nav-item" data-section="invoices">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
-            <line x1="2" y1="10" x2="22" y2="10"/>
-          </svg>
-          Invoices
-        </a>
-        <a href="#" class="nav-item" data-section="webhooks">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
-            <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
-          </svg>
-          Webhooks
-        </a>
-      </nav>
-      
-      <div class="sidebar-footer">
-        <div class="status-indicator">
-          <span class="status-dot"></span>
-          <span>Connected to Shopify</span>
-        </div>
-      </div>
-    </aside>
+      const response = await axios(config);
+      return response.data;
+    } catch (error) {
+      console.error(`Shopify API Error [${endpoint}]:`, error.response?.data || error.message);
+      throw new Error(error.response?.data?.errors || error.message);
+    }
+  }
 
-    <!-- Main Content -->
-    <main class="main">
-      <!-- Header -->
-      <header class="header">
-        <div class="header-title">
-          <h1 id="page-title">Dashboard</h1>
-          <p class="subtitle">Manage your Shopify quotes and invoices</p>
-        </div>
-        <div class="header-actions">
-          <button class="btn btn-secondary" onclick="refreshData()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-              <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-            </svg>
-            Refresh
-          </button>
-        </div>
-      </header>
+  /**
+   * Get all draft orders (quotes)
+   */
+  async getDraftOrders(params = {}) {
+    // Get drafts created in last 30 days to show most recent
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const createdAtMin = thirtyDaysAgo.toISOString();
+    
+    const queryParams = new URLSearchParams({
+      limit: params.limit || 250,
+      created_at_min: createdAtMin,
+      ...(params.status && params.status !== 'any' && { status: params.status })
+    }).toString();
+    
+    return this.request('GET', `/draft_orders.json?${queryParams}`);
+  }
 
-      <!-- Dashboard Section -->
-      <section id="dashboard-section" class="section active">
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="stat-icon orange">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                <polyline points="14 2 14 8 20 8"/>
-              </svg>
-            </div>
-            <div class="stat-content">
-              <h3 id="stat-quotes">0</h3>
-              <p>Open Quotes</p>
-            </div>
-          </div>
-          
-          <div class="stat-card">
-            <div class="stat-icon green">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
-              </svg>
-            </div>
-            <div class="stat-content">
-              <h3 id="stat-quote-value">$0</h3>
-              <p>Quote Pipeline</p>
-            </div>
-          </div>
-          
-          <div class="stat-card">
-            <div class="stat-icon blue">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
-                <line x1="1" y1="10" x2="23" y2="10"/>
-              </svg>
-            </div>
-            <div class="stat-content">
-              <h3 id="stat-invoices">0</h3>
-              <p>Invoices Generated</p>
-            </div>
-          </div>
-          
-          <div class="stat-card">
-            <div class="stat-icon purple">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/>
-                <line x1="6" y1="20" x2="6" y2="14"/>
-              </svg>
-            </div>
-            <div class="stat-content">
-              <h3 id="stat-revenue">$0</h3>
-              <p>30-Day Revenue</p>
-            </div>
-          </div>
-        </div>
+  /**
+   * Get single draft order by ID
+   */
+  async getDraftOrder(id) {
+    return this.request('GET', `/draft_orders/${id}.json`);
+  }
 
-        <div class="recent-activity">
-          <h2>Quick Actions</h2>
-          <div class="action-cards">
-            <div class="action-card" onclick="showSection('quotes')">
-              <div class="action-icon">📋</div>
-              <h3>View Draft Quotes</h3>
-              <p>Browse and convert your Shopify draft orders to invoices</p>
-            </div>
-            <div class="action-card" onclick="showSection('invoices')">
-              <div class="action-icon">📄</div>
-              <h3>Manage Invoices</h3>
-              <p>View, download, and send generated invoices</p>
-            </div>
-            <div class="action-card" onclick="showSection('webhooks')">
-              <div class="action-icon">🔔</div>
-              <h3>Webhook Status</h3>
-              <p>Monitor real-time Shopify event notifications</p>
-            </div>
-          </div>
-        </div>
-      </section>
+  /**
+   * Update a draft order
+   */
+  async updateDraftOrder(id, data) {
+    return this.request('PUT', `/draft_orders/${id}.json`, { draft_order: data });
+  }
 
-      <!-- Create Quote Section -->
-      <section id="create-quote-section" class="section">
-        <div class="section-header">
-          <h2>Create New Quote</h2>
-        </div>
-        
-        <div class="create-quote-form">
-          <!-- Customer Info -->
-          <div class="form-card">
-            <h3>👤 Customer Information</h3>
-            <div class="form-row">
-              <div class="form-group">
-                <label>Search Existing Customer</label>
-                <div class="search-container">
-                  <input type="text" id="customer-search" placeholder="Search by name or email..." onkeyup="searchCustomers(this.value)">
-                  <div id="customer-search-results" class="search-results"></div>
-                </div>
-              </div>
-            </div>
-            <div class="form-row">
-              <div class="form-group">
-                <label>First Name</label>
-                <input type="text" id="customer-first-name" placeholder="First name">
-              </div>
-              <div class="form-group">
-                <label>Last Name</label>
-                <input type="text" id="customer-last-name" placeholder="Last name">
-              </div>
-            </div>
-            <div class="form-row">
-              <div class="form-group">
-                <label>Email *</label>
-                <input type="email" id="customer-email" placeholder="customer@email.com" required>
-              </div>
-              <div class="form-group">
-                <label>Phone</label>
-                <input type="tel" id="customer-phone" placeholder="(555) 555-5555">
-              </div>
-            </div>
-          </div>
+  /**
+   * Create a new draft order
+   */
+  async createDraftOrder(data) {
+    return this.request('POST', '/draft_orders.json', { draft_order: data });
+  }
 
-          <!-- Shipping Address -->
-          <div class="form-card">
-            <h3>📦 Shipping Address</h3>
-            <div class="form-row">
-              <div class="form-group full-width">
-                <label>Address Line 1</label>
-                <input type="text" id="shipping-address1" placeholder="Street address">
-              </div>
-            </div>
-            <div class="form-row">
-              <div class="form-group full-width">
-                <label>Address Line 2</label>
-                <input type="text" id="shipping-address2" placeholder="Apt, suite, etc. (optional)">
-              </div>
-            </div>
-            <div class="form-row">
-              <div class="form-group">
-                <label>City</label>
-                <input type="text" id="shipping-city" placeholder="City">
-              </div>
-              <div class="form-group">
-                <label>State</label>
-                <input type="text" id="shipping-state" placeholder="State">
-              </div>
-              <div class="form-group">
-                <label>ZIP Code</label>
-                <input type="text" id="shipping-zip" placeholder="ZIP">
-              </div>
-            </div>
-          </div>
+  /**
+   * Complete/convert draft order to real order (creates invoice)
+   */
+  async completeDraftOrder(id, paymentPending = true) {
+    return this.request('PUT', `/draft_orders/${id}/complete.json?payment_pending=${paymentPending}`);
+  }
 
-          <!-- Products -->
-          <div class="form-card">
-            <h3>📦 Products</h3>
-            <div class="form-row">
-              <div class="form-group full-width">
-                <label>Search Products</label>
-                <div class="search-container">
-                  <input type="text" id="product-search" placeholder="Search phase converters..." onkeyup="searchProducts(this.value)">
-                  <div id="product-search-results" class="search-results"></div>
-                </div>
-              </div>
-            </div>
-            
-            <div id="quote-line-items" class="line-items">
-              <p class="empty-state">No products added yet. Search above to add products.</p>
-            </div>
-            
-            <div class="quote-totals">
-              <div class="total-row">
-                <span>Subtotal:</span>
-                <span id="quote-subtotal">$0.00</span>
-              </div>
-              <div class="total-row">
-                <span>Shipping:</span>
-                <span>Free</span>
-              </div>
-              <div class="total-row total-final">
-                <span>Total:</span>
-                <span id="quote-total">$0.00</span>
-              </div>
-            </div>
-          </div>
+  /**
+   * Send invoice for draft order
+   */
+  async sendDraftOrderInvoice(id, invoiceData = {}) {
+    const data = {
+      draft_order_invoice: {
+        to: invoiceData.to || null,
+        from: invoiceData.from || process.env.COMPANY_EMAIL,
+        subject: invoiceData.subject || `Invoice from ${process.env.COMPANY_NAME}`,
+        custom_message: invoiceData.message || 'Thank you for your order. Please find your invoice attached.',
+        bcc: invoiceData.bcc || []
+      }
+    };
+    
+    return this.request('POST', `/draft_orders/${id}/send_invoice.json`, data);
+  }
 
-          <!-- Notes -->
-          <div class="form-card">
-            <h3>📝 Notes</h3>
-            <div class="form-row">
-              <div class="form-group full-width">
-                <textarea id="quote-notes" placeholder="Internal notes about this quote..." rows="3"></textarea>
-              </div>
-            </div>
-          </div>
+  /**
+   * Get all orders
+   */
+  async getOrders(params = {}) {
+    const queryParams = new URLSearchParams({
+      limit: params.limit || 50,
+      status: params.status || 'any',
+      ...params
+    }).toString();
+    
+    return this.request('GET', `/orders.json?${queryParams}`);
+  }
 
-          <!-- Actions -->
-          <div class="form-actions">
-            <button class="btn btn-secondary" onclick="clearQuoteForm()">Clear Form</button>
-            <button class="btn btn-primary" onclick="createQuote()">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-                <polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
-              </svg>
-              Create Quote in Shopify
-            </button>
-            <button class="btn btn-success" onclick="createQuoteAndSend()">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-                <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-              </svg>
-              Create & Send Email
-            </button>
-          </div>
-        </div>
-      </section>
+  /**
+   * Get single order
+   */
+  async getOrder(id) {
+    return this.request('GET', `/orders/${id}.json`);
+  }
 
-      <!-- Quotes Section -->
-      <section id="quotes-section" class="section">
-        <div class="section-header">
-          <h2>Draft Quotes</h2>
-          <div class="section-actions">
-            <select id="quote-status-filter" onchange="loadDraftOrders()">
-              <option value="any" selected>All Drafts</option>
-              <option value="open">Open</option>
-              <option value="invoice_sent">Invoice Sent</option>
-              <option value="completed">Completed</option>
-            </select>
-            <button class="btn btn-primary" onclick="batchCreateInvoices()">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-                <polyline points="20 6 9 17 4 12"/>
-              </svg>
-              Create Selected Invoices
-            </button>
-          </div>
-        </div>
-        
-        <div class="table-container">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th><input type="checkbox" id="select-all-quotes" onchange="toggleAllQuotes()"></th>
-                <th>Quote #</th>
-                <th>Customer</th>
-                <th>Email</th>
-                <th>Total</th>
-                <th>Created</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="quotes-table-body">
-              <tr><td colspan="8" class="loading">Loading quotes...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+  /**
+   * Get customer by ID
+   */
+  async getCustomer(id) {
+    return this.request('GET', `/customers/${id}.json`);
+  }
 
-      <!-- Invoices Section -->
-      <section id="invoices-section" class="section">
-        <div class="section-header">
-          <h2>Generated Invoices</h2>
-        </div>
-        
-        <div class="table-container">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Invoice #</th>
-                <th>Created</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="invoices-table-body">
-              <tr><td colspan="3" class="loading">Loading invoices...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+  /**
+   * Search customers
+   */
+  async searchCustomers(query) {
+    return this.request('GET', `/customers/search.json?query=${encodeURIComponent(query)}`);
+  }
 
-      <!-- Webhooks Section -->
-      <section id="webhooks-section" class="section">
-        <div class="section-header">
-          <h2>Webhook Configuration</h2>
-          <button class="btn btn-primary" onclick="registerWebhooks()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-            </svg>
-            Register Webhooks
-          </button>
-        </div>
-        
-        <div class="webhook-info">
-          <div class="info-card">
-            <h3>Supported Webhook Events</h3>
-            <ul class="webhook-topics">
-              <li><span class="topic">draft_orders/create</span> - New quote created</li>
-              <li><span class="topic">draft_orders/update</span> - Quote modified or converted</li>
-              <li><span class="topic">draft_orders/delete</span> - Quote deleted</li>
-              <li><span class="topic">orders/create</span> - New order created</li>
-              <li><span class="topic">orders/paid</span> - Order payment received</li>
-              <li><span class="topic">orders/fulfilled</span> - Order shipped</li>
-            </ul>
-          </div>
-        </div>
-        
-        <div class="table-container">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Topic</th>
-                <th>Address</th>
-                <th>Format</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="webhooks-table-body">
-              <tr><td colspan="5" class="loading">Loading webhooks...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </main>
-  </div>
+  /**
+   * Get products
+   */
+  async getProducts(params = {}) {
+    const queryParams = new URLSearchParams({
+      limit: params.limit || 250,
+      status: 'active'
+    }).toString();
+    
+    return this.request('GET', `/products.json?${queryParams}`);
+  }
 
-  <!-- Modal -->
-  <div id="modal" class="modal">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2 id="modal-title">Modal Title</h2>
-        <button class="modal-close" onclick="closeModal()">&times;</button>
-      </div>
-      <div class="modal-body" id="modal-body"></div>
-      <div class="modal-footer" id="modal-footer"></div>
-    </div>
-  </div>
+  /**
+   * Search products by title (fetches all and filters)
+   */
+  async searchProducts(query, limit = 20) {
+    // Shopify REST API doesn't have good title search, so fetch and filter
+    const result = await this.request('GET', `/products.json?limit=250&status=active`);
+    
+    if (!result.products) return { products: [] };
+    
+    const searchLower = query.toLowerCase();
+    const filtered = result.products.filter(p => 
+      p.title.toLowerCase().includes(searchLower) ||
+      (p.variants && p.variants.some(v => 
+        (v.sku && v.sku.toLowerCase().includes(searchLower)) ||
+        (v.title && v.title.toLowerCase().includes(searchLower))
+      ))
+    ).slice(0, limit);
+    
+    return { products: filtered };
+  }
 
-  <!-- Toast notifications -->
-  <div id="toast-container"></div>
+  /**
+   * Get single product by ID
+   */
+  async getProduct(id) {
+    return this.request('GET', `/products/${id}.json`);
+  }
 
-  <script src="/app.js"></script>
-</body>
-</html>
+  /**
+   * Create metafield for order (store invoice data)
+   */
+  async createOrderMetafield(orderId, data) {
+    return this.request('POST', `/orders/${orderId}/metafields.json`, {
+      metafield: {
+        namespace: 'phoenix_invoices',
+        key: 'invoice_data',
+        value: JSON.stringify(data),
+        type: 'json'
+      }
+    });
+  }
+
+  /**
+   * Register webhooks
+   */
+  async registerWebhooks() {
+    const webhookTopics = [
+      'draft_orders/create',
+      'draft_orders/update',
+      'draft_orders/delete',
+      'orders/create',
+      'orders/paid',
+      'orders/fulfilled'
+    ];
+
+    const appUrl = process.env.APP_URL;
+    const results = [];
+
+    // First, get existing webhooks
+    const existingWebhooks = await this.getWebhooks();
+    const existingTopics = existingWebhooks.webhooks?.map(w => w.topic) || [];
+
+    for (const topic of webhookTopics) {
+      // Skip if already registered
+      if (existingTopics.includes(topic)) {
+        console.log(`Webhook already registered: ${topic}`);
+        results.push({ topic, status: 'exists' });
+        continue;
+      }
+
+      try {
+        const result = await this.request('POST', '/webhooks.json', {
+          webhook: {
+            topic,
+            address: `${appUrl}/webhooks/${topic.replace('/', '-')}`,
+            format: 'json'
+          }
+        });
+        console.log(`Webhook registered: ${topic}`);
+        results.push({ topic, status: 'created', id: result.webhook?.id });
+      } catch (error) {
+        console.error(`Failed to register webhook ${topic}:`, error.message);
+        results.push({ topic, status: 'error', error: error.message });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Get all registered webhooks
+   */
+  async getWebhooks() {
+    return this.request('GET', '/webhooks.json');
+  }
+
+  /**
+   * Delete a webhook
+   */
+  async deleteWebhook(id) {
+    return this.request('DELETE', `/webhooks/${id}.json`);
+  }
+
+  /**
+   * Verify webhook signature
+   */
+  verifyWebhookSignature(body, hmacHeader) {
+    const crypto = require('crypto');
+    const secret = process.env.SHOPIFY_WEBHOOK_SECRET || process.env.SHOPIFY_API_SECRET;
+    
+    const hash = crypto
+      .createHmac('sha256', secret)
+      .update(body, 'utf8')
+      .digest('base64');
+    
+    return crypto.timingSafeEqual(
+      Buffer.from(hash),
+      Buffer.from(hmacHeader || '')
+    );
+  }
+}
+
+module.exports = new ShopifyService();
