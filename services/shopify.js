@@ -38,9 +38,14 @@ class ShopifyService {
    * Get all draft orders (quotes)
    */
   async getDraftOrders(params = {}) {
+    // Get drafts from last 6 months to avoid loading ancient ones
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    const updatedAtMin = sixMonthsAgo.toISOString();
+    
     const queryParams = new URLSearchParams({
       limit: params.limit || 250,
-      order: 'updated_at desc',
+      updated_at_min: updatedAtMin,
       ...(params.status && params.status !== 'any' && { status: params.status })
     }).toString();
     
