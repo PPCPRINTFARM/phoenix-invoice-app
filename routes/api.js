@@ -154,6 +154,7 @@ router.post('/draft-orders/:id/generate-email', async (req, res, next) => {
       : draftOrder.billing_address?.name || 'Valued Customer';
     
     const customerEmail = draftOrder.customer?.email || draftOrder.email || '';
+    const customerPhone = draftOrder.customer?.phone || draftOrder.billing_address?.phone || draftOrder.shipping_address?.phone || '';
     const orderName = draftOrder.name || `#${draftOrder.id}`;
     const totalPrice = parseFloat(draftOrder.total_price || 0).toFixed(2);
     const invoiceUrl = draftOrder.invoice_url || '';
@@ -166,8 +167,45 @@ router.post('/draft-orders/:id/generate-email', async (req, res, next) => {
     }));
     
     const productList = products.map(p => `- ${p.name} (Qty: ${p.quantity}) - $${p.price}`).join('\n');
+    const productNames = products.map(p => p.name).join(', ');
 
-    // Generate email with OpenAI GPT-4 (knows Glen's writing style)
+    // Try to get CallRail transcript for this customer
+    let callTranscript = '';
+    let callSummary = '';
+    const callrailApiKey = process.env.CALLRAIL_API_KEY || '7de6f836a1feee75ce41493f8e9b64af';
+    const callrailAccountId = process.env.CALLRAIL_ACCOUNT_ID || '906309465';
+    
+    if (customerPhone) {
+      try {
+        const axios = require('axios');
+        // Clean phone number for search
+        const cleanPhone = customerPhone.replace(/\D/g, '').slice(-10);
+        
+        const callResponse = await axios.get(
+          `https://api.callrail.com/v3/a/${callrailAccountId}/calls.json?search=${cleanPhone}&per_page=5&sort=start_time&order=desc`,
+          {
+            headers: {
+              'Authorization': `Token token="${callrailApiKey}"`
+            }
+          }
+        );
+        
+        if (callResponse.data.calls && callResponse.data.calls.length > 0) {
+          const recentCall = callResponse.data.calls[0];
+          if (recentCall.transcription) {
+            callTranscript = recentCall.transcription;
+            console.log('Found CallRail transcript for', cleanPhone);
+          }
+          if (recentCall.summary) {
+            callSummary = recentCall.summary;
+          }
+        }
+      } catch (callErr) {
+        console.log('CallRail lookup error:', callErr.message);
+      }
+    }
+
+    // Generate email with OpenAI GPT-4
     const openaiKey = process.env.OPENAI_API_KEY;
     let emailBody = '';
     let subject = `Your Phoenix Phase Converter Quote ${orderName}`;
@@ -175,15 +213,32 @@ router.post('/draft-orders/:id/generate-email', async (req, res, next) => {
     if (openaiKey) {
       try {
         const axios = require('axios');
-        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-          model: 'gpt-4o',
-          max_tokens: 800,
-          messages: [{
-            role: 'system',
-            content: `You are Glen from Phoenix Phase Converters. You write friendly, knowledgeable follow-up emails to customers who requested quotes. Your tone is warm but professional - like talking to a neighbor who needs help with their shop. You know phase converters inside and out and genuinely want to help customers get the right solution.`
-          }, {
-            role: 'user',
-            content: `Write a follow-up email for this quote:
+        
+        const systemPrompt = `You are Glen Floreancig, Founder of Phoenix Phase Converters. You write detailed, consultative follow-up emails that:
+
+1. Reference the actual phone conversation when available
+2. Explain the technical "why" behind your recommendations
+3. Educate the customer about their power situation
+4. Include relevant product links and resources
+5. Are warm but professional - like talking to a neighbor who needs help
+
+Key facts about Phoenix Phase Converters:
+- LIFETIME WARRANTY against defects (not 5-year)
+- American-made/built in Phoenix, Arizona
+- Free shipping to contiguous USA
+- 24/7 technical support included
+- Patented technologies (US 5969957, US 9484844)
+
+Always end with this signature format:
+Best regards,
+
+Glen Floreancig
+Founder | Phoenix Phase Converters
+
+📞 800-417-6568
+🌐 PhoenixPhaseConverters.com`;
+
+        let userPrompt = `Write a follow-up email for this quote:
 
 CUSTOMER: ${customerName}
 ORDER NUMBER: ${orderName}
@@ -191,18 +246,40 @@ TOTAL: $${totalPrice}
 PRODUCTS:
 ${productList}
 
-INVOICE LINK: ${invoiceUrl}
+INVOICE/QUOTE LINK: ${invoiceUrl}`;
 
-Write the email that:
-1. Thanks them for their interest/call
-2. Mentions the specific product(s) they're looking at
-3. Highlights key benefits (American-made, 5-year warranty, free shipping, 24/7 technical support)
-4. Includes the invoice link naturally
-5. Offers to answer questions about sizing or installation
-6. Signs off as Glen
+        if (callTranscript) {
+          userPrompt += `
 
-Keep it conversational and under 200 words. Don't include subject line. Just the email body.`
-          }]
+CALL TRANSCRIPT (reference specific details from this conversation):
+${callTranscript.substring(0, 3000)}`;
+        } else if (callSummary) {
+          userPrompt += `
+
+CALL SUMMARY:
+${callSummary}`;
+        }
+
+        userPrompt += `
+
+Write a detailed, consultative email that:
+1. Thanks them for calling Phoenix Phase Converters
+2. References specific details from our conversation if available
+3. Explains why this product is right for their application
+4. Highlights the LIFETIME WARRANTY and American-made quality
+5. Includes the quote link
+6. Offers to answer any questions about sizing or installation
+7. Uses the full signature format
+
+Make it educational and helpful, not salesy. Match the tone of a knowledgeable expert helping a customer solve their power problem.`;
+
+        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+          model: 'gpt-4o',
+          max_tokens: 1500,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ]
         }, {
           headers: {
             'Authorization': `Bearer ${openaiKey}`,
@@ -225,7 +302,8 @@ Keep it conversational and under 200 words. Don't include subject line. Just the
       subject: subject,
       body: emailBody,
       orderName: orderName,
-      customerName: customerName
+      customerName: customerName,
+      hasTranscript: !!callTranscript
     });
   } catch (error) {
     next(error);
@@ -237,27 +315,28 @@ function generateTemplateEmail(name, orderName, total, products, invoiceUrl) {
   const productNames = products.map(p => p.name).join(', ');
   return `Hi ${name},
 
-Thank you for your interest in Phoenix Phase Converters! I wanted to follow up on your quote ${orderName} for ${productNames}.
+Thank you for calling Phoenix Phase Converters! I wanted to follow up on our conversation and send over your quote for the ${productNames}.
 
-Your quote total is $${total}.
+Your quote total is $${total}, which includes free shipping anywhere in the contiguous USA.
 
-Here are a few things that make Phoenix Phase Converters stand out:
-• American-made quality with a 5-year warranty
-• Free shipping to the contiguous USA
-• 24/7 technical support included
-• CNC and compressor compatible
+A few things that set Phoenix Phase Converters apart:
 
-You can view and pay your invoice here: ${invoiceUrl}
+• LIFETIME WARRANTY against any manufacturing defects
+• American-made right here in Phoenix, Arizona
+• 24/7 technical support included with every unit
+• Patented technologies for reduced inrush current and better voltage balance
 
-If you have any questions about sizing, installation, or anything else, feel free to reply to this email or give us a call at 1-800-417-6568.
+You can view and complete your order here: ${invoiceUrl}
 
-Looking forward to helping you get the power you need!
+If you have any questions about sizing, installation, or anything else, feel free to reply to this email or give us a call. We're happy to help make sure you get the right solution for your application.
 
 Best regards,
-Glen
-Phoenix Phase Converters
-1-800-417-6568
-support@phoenixphaseconverters.com`;
+
+Glen Floreancig
+Founder | Phoenix Phase Converters
+
+📞 800-417-6568
+🌐 PhoenixPhaseConverters.com`;
 }
 
 /**
