@@ -4,241 +4,7 @@
 
 // State management
 const state = {
-  draftOrders: [],/**
- * Shopify API Service
- * Handles all Shopify API interactions including draft orders, orders, and webhooks
- */
-
-const axios = require('axios');
-
-class ShopifyService {
-  constructor() {
-    this.baseUrl = `https://${process.env.SHOPIFY_STORE_URL}/admin/api/2024-01`;
-    this.headers = {
-      'X-Shopify-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN,
-      'Content-Type': 'application/json'
-    };
-  }
-
-  /**
-   * Make authenticated request to Shopify API
-   */
-  async request(method, endpoint, data = null) {
-    try {
-      const config = {
-        method,
-        url: `${this.baseUrl}${endpoint}`,
-        headers: this.headers,
-        ...(data && { data })
-      };
-      
-      const response = await axios(config);
-      return response.data;
-    } catch (error) {
-      console.error(`Shopify API Error [${endpoint}]:`, error.response?.data || error.message);
-      throw new Error(error.response?.data?.errors || error.message);
-    }
-  }
-
-  /**
-   * Get all draft orders (quotes)
-   */
-  async getDraftOrders(params = {}) {
-    const queryParams = new URLSearchParams({
-      limit: params.limit || 250,
-      ...(params.status && params.status !== 'any' && { status: params.status })
-    }).toString();
-    
-    return this.request('GET', `/draft_orders.json?${queryParams}`);
-  }
-
-  /**
-   * Get single draft order by ID
-   */
-  async getDraftOrder(id) {
-    return this.request('GET', `/draft_orders/${id}.json`);
-  }
-
-  /**
-   * Update a draft order
-   */
-  async updateDraftOrder(id, data) {
-    return this.request('PUT', `/draft_orders/${id}.json`, { draft_order: data });
-  }
-
-  /**
-   * Complete/convert draft order to real order (creates invoice)
-   */
-  async completeDraftOrder(id, paymentPending = true) {
-    return this.request('PUT', `/draft_orders/${id}/complete.json?payment_pending=${paymentPending}`);
-  }
-
-  /**
-   * Send invoice for draft order
-   */
-  async sendDraftOrderInvoice(id, invoiceData = {}) {
-    const data = {
-      draft_order_invoice: {
-        to: invoiceData.to || null,
-        from: invoiceData.from || process.env.COMPANY_EMAIL,
-        subject: invoiceData.subject || `Invoice from ${process.env.COMPANY_NAME}`,
-        custom_message: invoiceData.message || 'Thank you for your order. Please find your invoice attached.',
-        bcc: invoiceData.bcc || []
-      }
-    };
-    
-    return this.request('POST', `/draft_orders/${id}/send_invoice.json`, data);
-  }
-
-  /**
-   * Get all orders
-   */
-  async getOrders(params = {}) {
-    const queryParams = new URLSearchParams({
-      limit: params.limit || 50,
-      status: params.status || 'any',
-      ...params
-    }).toString();
-    
-    return this.request('GET', `/orders.json?${queryParams}`);
-  }
-
-  /**
-   * Get single order
-   */
-  async getOrder(id) {
-    return this.request('GET', `/orders/${id}.json`);
-  }
-
-  /**
-   * Get customer by ID
-   */
-  async getCustomer(id) {
-    return this.request('GET', `/customers/${id}.json`);
-  }
-
-  /**
-   * Search customers
-   */
-  async searchCustomers(query) {
-    return this.request('GET', `/customers/search.json?query=${encodeURIComponent(query)}`);
-  }
-
-  /**
-   * Get products
-   */
-  async getProducts(params = {}) {
-    const queryParams = new URLSearchParams({
-      limit: params.limit || 50,
-      ...params
-    }).toString();
-    
-    return this.request('GET', `/products.json?${queryParams}`);
-  }
-
-  /**
-   * Get single product by ID
-   */
-  async getProduct(id) {
-    return this.request('GET', `/products/${id}.json`);
-  }
-
-  /**
-   * Create metafield for order (store invoice data)
-   */
-  async createOrderMetafield(orderId, data) {
-    return this.request('POST', `/orders/${orderId}/metafields.json`, {
-      metafield: {
-        namespace: 'phoenix_invoices',
-        key: 'invoice_data',
-        value: JSON.stringify(data),
-        type: 'json'
-      }
-    });
-  }
-
-  /**
-   * Register webhooks
-   */
-  async registerWebhooks() {
-    const webhookTopics = [
-      'draft_orders/create',
-      'draft_orders/update',
-      'draft_orders/delete',
-      'orders/create',
-      'orders/paid',
-      'orders/fulfilled'
-    ];
-
-    const appUrl = process.env.APP_URL;
-    const results = [];
-
-    // First, get existing webhooks
-    const existingWebhooks = await this.getWebhooks();
-    const existingTopics = existingWebhooks.webhooks?.map(w => w.topic) || [];
-
-    for (const topic of webhookTopics) {
-      // Skip if already registered
-      if (existingTopics.includes(topic)) {
-        console.log(`Webhook already registered: ${topic}`);
-        results.push({ topic, status: 'exists' });
-        continue;
-      }
-
-      try {
-        const result = await this.request('POST', '/webhooks.json', {
-          webhook: {
-            topic,
-            address: `${appUrl}/webhooks/${topic.replace('/', '-')}`,
-            format: 'json'
-          }
-        });
-        console.log(`Webhook registered: ${topic}`);
-        results.push({ topic, status: 'created', id: result.webhook?.id });
-      } catch (error) {
-        console.error(`Failed to register webhook ${topic}:`, error.message);
-        results.push({ topic, status: 'error', error: error.message });
-      }
-    }
-
-    return results;
-  }
-
-  /**
-   * Get all registered webhooks
-   */
-  async getWebhooks() {
-    return this.request('GET', '/webhooks.json');
-  }
-
-  /**
-   * Delete a webhook
-   */
-  async deleteWebhook(id) {
-    return this.request('DELETE', `/webhooks/${id}.json`);
-  }
-
-  /**
-   * Verify webhook signature
-   */
-  verifyWebhookSignature(body, hmacHeader) {
-    const crypto = require('crypto');
-    const secret = process.env.SHOPIFY_WEBHOOK_SECRET || process.env.SHOPIFY_API_SECRET;
-    
-    const hash = crypto
-      .createHmac('sha256', secret)
-      .update(body, 'utf8')
-      .digest('base64');
-    
-    return crypto.timingSafeEqual(
-      Buffer.from(hash),
-      Buffer.from(hmacHeader || '')
-    );
-  }
-}
-
-module.exports = new ShopifyService();
-
+  draftOrders: [],
   invoices: [],
   webhooks: [],
   selectedQuotes: new Set(),
@@ -338,15 +104,21 @@ async function loadDraftOrders() {
   try {
     const status = document.getElementById('quote-status-filter').value;
     const data = await api(`/draft-orders?status=${status}`);
-    state.draftOrders = data.draftOrders;
+    
+    // Sort by created_at descending (newest first)
+    const sortedOrders = data.draftOrders.sort((a, b) => {
+      return new Date(b.created_at) - new Date(a.created_at);
+    });
+    
+    state.draftOrders = sortedOrders;
     state.selectedQuotes.clear();
     
-    if (data.draftOrders.length === 0) {
+    if (sortedOrders.length === 0) {
       tbody.innerHTML = '<tr><td colspan="8" class="loading">No draft orders found</td></tr>';
       return;
     }
     
-    tbody.innerHTML = data.draftOrders.map(order => `
+    tbody.innerHTML = sortedOrders.map(order => `
       <tr>
         <td>
           <input type="checkbox" 
@@ -361,8 +133,11 @@ async function loadDraftOrders() {
         <td>${formatDate(order.created_at)}</td>
         <td><span class="status-badge ${order.status}">${order.status}</span></td>
         <td>
+          <button class="btn btn-sm btn-success" onclick="sendQuoteEmail(${order.id})" title="Generate invoice + email">
+            Send
+          </button>
           <button class="btn btn-sm btn-primary" onclick="createInvoice(${order.id})">
-            Create Invoice
+            Invoice
           </button>
           <button class="btn btn-sm btn-secondary" onclick="viewQuoteDetails(${order.id})">
             View
@@ -723,6 +498,65 @@ function refreshData() {
     showSection(sectionName);
   }
   showToast('Data refreshed', 'success');
+}
+
+// Send Quote + Email
+async function sendQuoteEmail(draftOrderId) {
+  showToast('Generating invoice and email...', 'info');
+  
+  try {
+    // First generate the invoice
+    const invoiceData = await api(`/draft-orders/${draftOrderId}/create-invoice`, {
+      method: 'POST',
+      body: JSON.stringify({ sendEmail: false, completeOrder: false })
+    });
+    
+    // Then generate the email
+    const emailData = await api(`/draft-orders/${draftOrderId}/generate-email`, {
+      method: 'POST'
+    });
+    
+    // Show modal with email and download option
+    showModal('Send Quote Email', `
+      <div style="margin-bottom: 16px;">
+        <strong>To:</strong> ${emailData.to}<br>
+        <strong>Subject:</strong> ${emailData.subject}
+      </div>
+      <div style="margin-bottom: 16px;">
+        <label style="font-weight: bold; display: block; margin-bottom: 8px;">Email Body:</label>
+        <textarea id="email-body" style="width: 100%; height: 200px; padding: 12px; border: 1px solid #374151; border-radius: 8px; background: #1f2937; color: #f3f4f6; font-family: inherit; resize: vertical;">${emailData.body}</textarea>
+      </div>
+      <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+        <button class="btn btn-secondary" onclick="copyEmailToClipboard()">
+          📋 Copy Email
+        </button>
+        <button class="btn btn-secondary" onclick="downloadInvoice('${invoiceData.invoice.invoiceNumber}')">
+          📄 Download Invoice
+        </button>
+      </div>
+    `, [
+      { text: 'Cancel', class: 'btn-secondary', onclick: 'closeModal()' },
+      { text: 'Open in Gmail', class: 'btn-primary', onclick: `openInGmail('${emailData.to}', '${encodeURIComponent(emailData.subject)}')` }
+    ]);
+    
+  } catch (error) {
+    showToast('Failed to generate email: ' + error.message, 'error');
+  }
+}
+
+function copyEmailToClipboard() {
+  const emailBody = document.getElementById('email-body').value;
+  navigator.clipboard.writeText(emailBody).then(() => {
+    showToast('Email copied to clipboard!', 'success');
+  });
+}
+
+function openInGmail(to, subject) {
+  const emailBody = document.getElementById('email-body').value;
+  const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${to}&su=${subject}&body=${encodeURIComponent(emailBody)}`;
+  window.open(gmailUrl, '_blank');
+  closeModal();
+  showToast('Gmail opened - attach the invoice PDF!', 'info');
 }
 
 // Initialize
