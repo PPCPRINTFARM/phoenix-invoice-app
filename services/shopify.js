@@ -37,7 +37,7 @@ class ShopifyService {
   /**
    * Get all draft orders (quotes)
    */
-  async getDraftOrders(params = {}) {
+  params.status !== 'any'
     const queryParams = new URLSearchParams({
       limit: params.limit || 250,
       ...(params.status && params.status !== 'any' && { status: params.status })
