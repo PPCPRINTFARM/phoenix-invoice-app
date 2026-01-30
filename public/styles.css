@@ -404,6 +404,16 @@ body {
   background: var(--border);
 }
 
+.btn-success {
+  background: linear-gradient(135deg, #10b981, #34d399);
+  color: white;
+}
+
+.btn-success:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
 .btn-sm {
   padding: 6px 12px;
   font-size: 13px;
