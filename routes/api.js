@@ -397,12 +397,12 @@ router.post('/draft-orders/:id/generate-email', async (req, res, next) => {
       try {
         const axios = require('axios');
         
-        const systemPrompt = `You are Glen Floreancig, Founder of Phoenix Phase Converters. You write detailed, consultative follow-up emails that:
+        const systemPrompt = `You are Glen Floreancig, Founder of Phoenix Phase Converters. You write detailed, consultative follow-up emails in HTML format that:
 
 1. Reference the actual phone conversation when available
 2. Explain the technical "why" behind your recommendations
 3. Educate the customer about their power situation
-4. Include relevant product links, manuals, and videos
+4. Include relevant product links, manuals, and videos as clickable links
 5. Are warm but professional - like talking to a neighbor who needs help
 
 Key facts about Phoenix Phase Converters:
@@ -414,19 +414,23 @@ Key facts about Phoenix Phase Converters:
 - Featured in VoyagePhoenix Magazine
 - "Best Power Converter Provider 2025" - Electrical Business Review
 
-When including documentation links, format them cleanly with descriptive labels.
+FORMAT YOUR RESPONSE AS HTML EMAIL:
+- Use <p> tags for paragraphs
+- Use <a href="..."> for all links (make them clickable)
+- Use <strong> or <b> for emphasis
+- Use <ul> and <li> for bullet lists
+- Use <br> for line breaks where needed
+- Style links with color: #f97316 (Phoenix orange)
+- Keep it clean and professional
 
-Always end with this signature format:
-Best regards,
-
-Glen Floreancig
-Founder | Phoenix Phase Converters
-
-📞 800-417-6568
-🌐 PhoenixPhaseConverters.com
-
-Phoenix Phase Converters
-American-Built Rotary & Digital Phase Conversion Solutions`;
+Always end with this signature (in HTML):
+<p>Best regards,</p>
+<p><strong>Glen Floreancig</strong><br>
+Founder | Phoenix Phase Converters</p>
+<p>📞 <a href="tel:8004176568">800-417-6568</a><br>
+🌐 <a href="https://phoenixphaseconverters.com" style="color: #f97316;">PhoenixPhaseConverters.com</a></p>
+<p style="color: #666; font-size: 12px;">Phoenix Phase Converters<br>
+American-Built Rotary & Digital Phase Conversion Solutions</p>`;
 
         let userPrompt = `Write a follow-up email for this quote:
 
@@ -506,33 +510,37 @@ Format the links cleanly with descriptive labels. Make it educational and helpfu
   }
 });
 
-// Template email fallback
+// Template email fallback (HTML format)
 function generateTemplateEmail(name, orderName, total, products, invoiceUrl) {
   const productNames = products.map(p => p.name).join(', ');
-  return `Hi ${name},
+  return `<p>Hi ${name},</p>
 
-Thank you for calling Phoenix Phase Converters! I wanted to follow up on our conversation and send over your quote for the ${productNames}.
+<p>Thank you for calling Phoenix Phase Converters! I wanted to follow up on our conversation and send over your quote for the <strong>${productNames}</strong>.</p>
 
-Your quote total is $${total}, which includes free shipping anywhere in the contiguous USA.
+<p>Your quote total is <strong>$${total}</strong>, which includes free shipping anywhere in the contiguous USA.</p>
 
-A few things that set Phoenix Phase Converters apart:
+<p><a href="${invoiceUrl}" style="display: inline-block; background: #f97316; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">View Your Quote & Complete Order</a></p>
 
-• LIFETIME WARRANTY against any manufacturing defects
-• American-made right here in Phoenix, Arizona
-• 24/7 technical support included with every unit
-• Patented technologies for reduced inrush current and better voltage balance
+<p>A few things that set Phoenix Phase Converters apart:</p>
+<ul>
+  <li><strong>LIFETIME WARRANTY</strong> against any manufacturing defects</li>
+  <li>American-made right here in Phoenix, Arizona</li>
+  <li>24/7 technical support included with every unit</li>
+  <li>Patented technologies for reduced inrush current and better voltage balance</li>
+</ul>
 
-You can view and complete your order here: ${invoiceUrl}
+<p>📱 <strong>Download our FREE App:</strong> <a href="https://phoenixphaseconverters.com/pages/phoenix-app-walk-through" style="color: #f97316;">Phoenix App</a><br>
+<em>Keep track of your quotes, orders, access manuals, and get troubleshooting help!</em></p>
 
-If you have any questions about sizing, installation, or anything else, feel free to reply to this email or give us a call. We're happy to help make sure you get the right solution for your application.
+<p>If you have any questions about sizing, installation, or anything else, feel free to reply to this email or give us a call. We're happy to help make sure you get the right solution for your application.</p>
 
-Best regards,
-
-Glen Floreancig
-Founder | Phoenix Phase Converters
-
-📞 800-417-6568
-🌐 PhoenixPhaseConverters.com`;
+<p>Best regards,</p>
+<p><strong>Glen Floreancig</strong><br>
+Founder | Phoenix Phase Converters</p>
+<p>📞 <a href="tel:8004176568">800-417-6568</a><br>
+🌐 <a href="https://phoenixphaseconverters.com" style="color: #f97316;">PhoenixPhaseConverters.com</a></p>
+<p style="color: #666; font-size: 12px;">Phoenix Phase Converters<br>
+American-Built Rotary & Digital Phase Conversion Solutions</p>`;
 }
 
 /**
