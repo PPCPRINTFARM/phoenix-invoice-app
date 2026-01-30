@@ -83,11 +83,11 @@ class InvoiceService {
   }
 
   draftOrderToInvoice(draftOrder) {
-    const taxRate = parseFloat(process.env.TAX_RATE) || 0.06;
+    const taxRate = 0; // No tax on quotes
     const subtotal = parseFloat(draftOrder.subtotal_price) || 0;
     const shippingCost = parseFloat(draftOrder.total_shipping_price_set?.shop_money?.amount) || 0;
-    const taxAmount = parseFloat(draftOrder.total_tax) || (subtotal * taxRate);
-    const total = subtotal + taxAmount + shippingCost - (parseFloat(draftOrder.total_discounts) || 0);
+    const taxAmount = 0; // No tax on quotes
+    const total = subtotal + shippingCost - (parseFloat(draftOrder.total_discounts) || 0);
 
     const validUntil = new Date();
     validUntil.setDate(validUntil.getDate() + 30);
@@ -410,10 +410,13 @@ class InvoiceService {
         doc.text('Shipping:', totalsX, y);
         doc.text(invoice.shippingCost > 0 ? this.formatCurrency(invoice.shippingCost) : 'Free', totalsX + 120, y, { width: 80, align: 'right' });
         
-        y += 18;
-        const taxPercent = Math.round(invoice.taxRate * 100);
-        doc.text(`Tax (${taxPercent}%):`, totalsX, y);
-        doc.text(this.formatCurrency(invoice.taxAmount), totalsX + 120, y, { width: 80, align: 'right' });
+        // Only show tax if there is any
+        if (invoice.taxAmount > 0) {
+          y += 18;
+          const taxPercent = Math.round(invoice.taxRate * 100);
+          doc.text(`Tax (${taxPercent}%):`, totalsX, y);
+          doc.text(this.formatCurrency(invoice.taxAmount), totalsX + 120, y, { width: 80, align: 'right' });
+        }
         
         y += 22;
         doc.font('Helvetica-Bold').fontSize(14).fillColor(this.colors.navyBlue);
