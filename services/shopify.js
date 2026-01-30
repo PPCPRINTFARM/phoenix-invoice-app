@@ -40,6 +40,7 @@ class ShopifyService {
   async getDraftOrders(params = {}) {
     const queryParams = new URLSearchParams({
       limit: params.limit || 250,
+      order: 'updated_at desc',
       ...(params.status && params.status !== 'any' && { status: params.status })
     }).toString();
     
