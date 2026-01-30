@@ -632,7 +632,7 @@ class InvoiceService {
         // Tax
         const taxPercent = Math.round(invoice.taxRate * 100);
         doc.text(`Tax (${taxPercent}%)`, totalsX + 10, y + 3)
-           .text(`$${invoice.taxAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, totalsX + 135, y + 3, { width: 80, align: 'right' });
+           .text(`$${invoice.taxAmount.toFixed(2)}`, totalsX + 135, y + 3, { width: 80, align: 'right' });
         
         y += 25;
         
@@ -646,7 +646,7 @@ class InvoiceService {
            .fontSize(14)
            .text('Total:', totalsX + 50, y + 5)
            .fontSize(16)
-           .text(`$${invoice.total.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, totalsX + 110, y + 3, { width: 105, align: 'right' });
+           .text(`$${invoice.total.toFixed(2)}`, totalsX + 110, y + 3, { width: 105, align: 'right' });
 
         // ============ NOTES SECTION ============
         
