@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -26,6 +27,12 @@
             <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
           </svg>
           Dashboard
+        </a>
+        <a href="#" class="nav-item" data-section="create-quote">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          Create Quote
         </a>
         <a href="#" class="nav-item" data-section="quotes">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -151,6 +158,141 @@
               <h3>Webhook Status</h3>
               <p>Monitor real-time Shopify event notifications</p>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Create Quote Section -->
+      <section id="create-quote-section" class="section">
+        <div class="section-header">
+          <h2>Create New Quote</h2>
+        </div>
+        
+        <div class="create-quote-form">
+          <!-- Customer Info -->
+          <div class="form-card">
+            <h3>👤 Customer Information</h3>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Search Existing Customer</label>
+                <div class="search-container">
+                  <input type="text" id="customer-search" placeholder="Search by name or email..." onkeyup="searchCustomers(this.value)">
+                  <div id="customer-search-results" class="search-results"></div>
+                </div>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>First Name</label>
+                <input type="text" id="customer-first-name" placeholder="First name">
+              </div>
+              <div class="form-group">
+                <label>Last Name</label>
+                <input type="text" id="customer-last-name" placeholder="Last name">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Email *</label>
+                <input type="email" id="customer-email" placeholder="customer@email.com" required>
+              </div>
+              <div class="form-group">
+                <label>Phone</label>
+                <input type="tel" id="customer-phone" placeholder="(555) 555-5555">
+              </div>
+            </div>
+          </div>
+
+          <!-- Shipping Address -->
+          <div class="form-card">
+            <h3>📦 Shipping Address</h3>
+            <div class="form-row">
+              <div class="form-group full-width">
+                <label>Address Line 1</label>
+                <input type="text" id="shipping-address1" placeholder="Street address">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group full-width">
+                <label>Address Line 2</label>
+                <input type="text" id="shipping-address2" placeholder="Apt, suite, etc. (optional)">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>City</label>
+                <input type="text" id="shipping-city" placeholder="City">
+              </div>
+              <div class="form-group">
+                <label>State</label>
+                <input type="text" id="shipping-state" placeholder="State">
+              </div>
+              <div class="form-group">
+                <label>ZIP Code</label>
+                <input type="text" id="shipping-zip" placeholder="ZIP">
+              </div>
+            </div>
+          </div>
+
+          <!-- Products -->
+          <div class="form-card">
+            <h3>📦 Products</h3>
+            <div class="form-row">
+              <div class="form-group full-width">
+                <label>Search Products</label>
+                <div class="search-container">
+                  <input type="text" id="product-search" placeholder="Search phase converters..." onkeyup="searchProducts(this.value)">
+                  <div id="product-search-results" class="search-results"></div>
+                </div>
+              </div>
+            </div>
+            
+            <div id="quote-line-items" class="line-items">
+              <p class="empty-state">No products added yet. Search above to add products.</p>
+            </div>
+            
+            <div class="quote-totals">
+              <div class="total-row">
+                <span>Subtotal:</span>
+                <span id="quote-subtotal">$0.00</span>
+              </div>
+              <div class="total-row">
+                <span>Shipping:</span>
+                <span>Free</span>
+              </div>
+              <div class="total-row total-final">
+                <span>Total:</span>
+                <span id="quote-total">$0.00</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Notes -->
+          <div class="form-card">
+            <h3>📝 Notes</h3>
+            <div class="form-row">
+              <div class="form-group full-width">
+                <textarea id="quote-notes" placeholder="Internal notes about this quote..." rows="3"></textarea>
+              </div>
+            </div>
+          </div>
+
+          <!-- Actions -->
+          <div class="form-actions">
+            <button class="btn btn-secondary" onclick="clearQuoteForm()">Clear Form</button>
+            <button class="btn btn-primary" onclick="createQuote()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                <polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+              </svg>
+              Create Quote in Shopify
+            </button>
+            <button class="btn btn-success" onclick="createQuoteAndSend()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+              </svg>
+              Create & Send Email
+            </button>
           </div>
         </div>
       </section>
