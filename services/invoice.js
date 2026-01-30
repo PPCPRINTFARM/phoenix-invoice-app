@@ -132,6 +132,7 @@ class InvoiceService {
         price: parseFloat(item.price),
         total: parseFloat(item.price) * item.quantity,
         image: item.image?.src || null,
+        productId: item.product_id,
         features: this.getProductFeatures(item.title)
       })),
 
@@ -296,9 +297,21 @@ class InvoiceService {
         // Product Row (first item only for single page)
         const item = invoice.lineItems[0];
         if (item) {
-          // Product name
+          // Try to download and display product image
+          let productImagePath = null;
+          if (item.image) {
+            try {
+              const imageFilename = `product_${item.id}.jpg`;
+              productImagePath = await this.downloadImage(item.image, imageFilename);
+            } catch (imgErr) {
+              console.log('Could not download product image:', imgErr.message);
+            }
+          }
+          
+          // Product name (narrower if we have an image)
+          const titleWidth = productImagePath ? 220 : 300;
           doc.font('Helvetica-Bold').fontSize(10).fillColor(this.colors.textDark)
-             .text(item.title, margin + 10, y + 8, { width: 300 });
+             .text(item.title, margin + 10, y + 8, { width: titleWidth });
           
           // Qty, Price, Total
           doc.font('Helvetica').fontSize(10)
@@ -307,11 +320,25 @@ class InvoiceService {
              .text(this.formatCurrency(item.total), margin + 460, y + 8, { width: 60, align: 'right' });
           
           // Features
+          const featuresStartY = y + 30;
           y += 30;
           doc.font('Helvetica').fontSize(8).fillColor(this.colors.textMuted);
           for (const feature of item.features.slice(0, 4)) {
-            doc.text('• ' + feature, margin + 10, y, { width: 280 });
+            doc.text('• ' + feature, margin + 10, y, { width: titleWidth });
             y += 11;
+          }
+          
+          // Product image on the right side of product info
+          if (productImagePath && fs.existsSync(productImagePath)) {
+            try {
+              doc.image(productImagePath, margin + 240, featuresStartY - 22, { 
+                width: 80,
+                height: 80,
+                fit: [80, 80]
+              });
+            } catch (imgErr) {
+              console.log('Could not embed product image:', imgErr.message);
+            }
           }
         }
         
