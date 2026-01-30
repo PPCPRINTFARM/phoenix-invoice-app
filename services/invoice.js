@@ -158,7 +158,7 @@ class InvoiceService {
 
       invoiceNotes: [
         'Free shipping to the contiguous USA',
-        'USA-made parts with 5-year warranty',
+        'American-made with LIFETIME WARRANTY',
         '24/7 technical support included'
       ],
 
@@ -186,7 +186,7 @@ class InvoiceService {
         'True 3-phase power output',
         'CNC & compressor compatible',
         'Heavy-duty construction',
-        '5-year warranty'
+        'Lifetime warranty'
       ];
     }
     
@@ -194,7 +194,7 @@ class InvoiceService {
       'American-made quality',
       'Professional-grade',
       'Easy installation',
-      '5-year warranty'
+      'Lifetime warranty'
     ];
   }
 
