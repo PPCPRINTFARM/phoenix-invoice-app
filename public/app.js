@@ -1,506 +1,565 @@
 /**
- * API Routes
- * Handles draft orders, invoices, and webhook management
+ * Phoenix Invoice App - Frontend JavaScript
  */
 
-const express = require('express');
-const router = express.Router();
-const shopifyService = require('../services/shopify');
-const invoiceService = require('../services/invoice');
-const path = require('path');
+// State management
+const state = {
+  draftOrders: [],
+  invoices: [],
+  webhooks: [],
+  selectedQuotes: new Set(),
+  stats: {}
+};
 
-/**
- * Get all draft orders (quotes)
- */
-router.get('/draft-orders', async (req, res, next) => {
+// API helper
+async function api(endpoint, options = {}) {
   try {
-    const { status = 'any', limit = 250 } = req.query;
-    const result = await shopifyService.getDraftOrders({ status, limit });
-    
-    // Sort by created_at descending (newest first)
-    const sortedDraftOrders = (result.draft_orders || []).sort((a, b) => {
-      return new Date(b.created_at) - new Date(a.created_at);
-    });
-    
-    res.json({
-      success: true,
-      count: sortedDraftOrders.length,
-      draftOrders: sortedDraftOrders
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * Get single draft order
- */
-router.get('/draft-orders/:id', async (req, res, next) => {
-  try {
-    const result = await shopifyService.getDraftOrder(req.params.id);
-    res.json({
-      success: true,
-      draftOrder: result.draft_order
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * Convert draft order to invoice
- */
-router.post('/draft-orders/:id/create-invoice', async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const { sendEmail = false, completeOrder = false } = req.body;
-
-    // Get draft order
-    const draftResult = await shopifyService.getDraftOrder(id);
-    const draftOrder = draftResult.draft_order;
-
-    if (!draftOrder) {
-      return res.status(404).json({
-        success: false,
-        error: 'Draft order not found'
-      });
-    }
-
-    // Convert to invoice data
-    const invoiceData = invoiceService.draftOrderToInvoice(draftOrder);
-
-    // Fetch product images from Shopify products API
-    for (const item of invoiceData.lineItems) {
-      if (!item.image && item.productId) {
-        try {
-          const productResult = await shopifyService.getProduct(item.productId);
-          if (productResult.product?.image?.src) {
-            item.image = productResult.product.image.src;
-          } else if (productResult.product?.images?.[0]?.src) {
-            item.image = productResult.product.images[0].src;
-          }
-        } catch (err) {
-          console.log(`Could not fetch product image for ${item.productId}:`, err.message);
-        }
-      }
-    }
-
-    // Generate PDF
-    const pdfResult = await invoiceService.generatePDF(invoiceData);
-
-    // Optionally complete the draft order (convert to real order)
-    let order = null;
-    if (completeOrder) {
-      const orderResult = await shopifyService.completeDraftOrder(id, true);
-      order = orderResult.draft_order;
-      
-      // Store invoice metadata on the order
-      if (order?.order_id) {
-        await shopifyService.createOrderMetafield(order.order_id, {
-          invoiceNumber: invoiceData.invoiceNumber,
-          createdAt: invoiceData.createdAt,
-          pdfFile: pdfResult.filename
-        });
-      }
-    }
-
-    // Optionally send invoice email via Shopify
-    if (sendEmail) {
-      const customerEmail = draftOrder.customer?.email || draftOrder.email;
-      if (customerEmail) {
-        await shopifyService.sendDraftOrderInvoice(id, {
-          to: customerEmail,
-          subject: `Invoice ${invoiceData.invoiceNumber} from ${process.env.COMPANY_NAME}`,
-          message: `Please find your invoice attached. Invoice #: ${invoiceData.invoiceNumber}. Total: $${invoiceData.total.toFixed(2)}`
-        });
-      }
-    }
-
-    res.json({
-      success: true,
-      invoice: invoiceData,
-      pdf: {
-        filename: pdfResult.filename,
-        downloadUrl: `/api/invoices/${invoiceData.invoiceNumber}/download`
+    const response = await fetch(`/api${endpoint}`, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
       },
-      order: order,
-      emailSent: sendEmail
+      ...options
     });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * Generate personalized email for a draft order
- */
-router.post('/draft-orders/:id/generate-email', async (req, res, next) => {
-  try {
-    const { id } = req.params;
     
-    // Get draft order
-    const draftResult = await shopifyService.getDraftOrder(id);
-    const draftOrder = draftResult.draft_order;
-
-    if (!draftOrder) {
-      return res.status(404).json({
-        success: false,
-        error: 'Draft order not found'
-      });
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'API request failed');
     }
-
-    const customerName = draftOrder.customer?.first_name 
-      ? `${draftOrder.customer.first_name} ${draftOrder.customer.last_name || ''}`.trim()
-      : draftOrder.billing_address?.name || 'Valued Customer';
     
-    const customerEmail = draftOrder.customer?.email || draftOrder.email || '';
-    const orderName = draftOrder.name || `#${draftOrder.id}`;
-    const totalPrice = parseFloat(draftOrder.total_price || 0).toFixed(2);
-    const invoiceUrl = draftOrder.invoice_url || '';
-    
-    // Get product details
-    const products = (draftOrder.line_items || []).map(item => ({
-      name: item.title,
-      quantity: item.quantity,
-      price: parseFloat(item.price).toFixed(2)
-    }));
-    
-    const productList = products.map(p => `- ${p.name} (Qty: ${p.quantity}) - $${p.price}`).join('\n');
-
-    // Generate email with Claude API
-    const anthropicKey = process.env.ANTHROPIC_API_KEY;
-    let emailBody = '';
-    let subject = `Your Phoenix Phase Converter Quote ${orderName}`;
-    
-    if (anthropicKey) {
-      try {
-        const axios = require('axios');
-        const response = await axios.post('https://api.anthropic.com/v1/messages', {
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 800,
-          messages: [{
-            role: 'user',
-            content: `Write a friendly, professional follow-up email for Phoenix Phase Converters.
-
-CUSTOMER: ${customerName}
-ORDER NUMBER: ${orderName}
-TOTAL: $${totalPrice}
-PRODUCTS:
-${productList}
-
-INVOICE LINK: ${invoiceUrl}
-
-Write a warm email that:
-1. Thanks them for their interest
-2. Mentions the specific product(s) they're interested in
-3. Highlights key benefits (American-made, 5-year warranty, free shipping, technical support)
-4. Includes the invoice link
-5. Offers to answer any questions
-6. Ends with a friendly sign-off from Glen
-
-Keep it concise (under 200 words). Don't include subject line. Just the email body.`
-          }]
-        }, {
-          headers: {
-            'x-api-key': anthropicKey,
-            'anthropic-version': '2023-06-01',
-            'Content-Type': 'application/json'
-          }
-        });
-        
-        emailBody = response.data.content[0].text;
-      } catch (aiError) {
-        console.log('Claude API error, using template:', aiError.message);
-        emailBody = generateTemplateEmail(customerName, orderName, totalPrice, products, invoiceUrl);
-      }
-    } else {
-      emailBody = generateTemplateEmail(customerName, orderName, totalPrice, products, invoiceUrl);
-    }
-
-    res.json({
-      success: true,
-      to: customerEmail,
-      subject: subject,
-      body: emailBody,
-      orderName: orderName,
-      customerName: customerName
-    });
+    return data;
   } catch (error) {
-    next(error);
+    console.error('API Error:', error);
+    showToast(error.message, 'error');
+    throw error;
   }
-});
-
-// Template email fallback
-function generateTemplateEmail(name, orderName, total, products, invoiceUrl) {
-  const productNames = products.map(p => p.name).join(', ');
-  return `Hi ${name},
-
-Thank you for your interest in Phoenix Phase Converters! I wanted to follow up on your quote ${orderName} for ${productNames}.
-
-Your quote total is $${total}.
-
-Here are a few things that make Phoenix Phase Converters stand out:
-• American-made quality with a 5-year warranty
-• Free shipping to the contiguous USA
-• 24/7 technical support included
-• CNC and compressor compatible
-
-You can view and pay your invoice here: ${invoiceUrl}
-
-If you have any questions about sizing, installation, or anything else, feel free to reply to this email or give us a call at 1-800-417-6568.
-
-Looking forward to helping you get the power you need!
-
-Best regards,
-Glen
-Phoenix Phase Converters
-1-800-417-6568
-support@phoenixphaseconverters.com`;
 }
 
-/**
- * Batch convert multiple draft orders to invoices
- */
-router.post('/draft-orders/batch-invoice', async (req, res, next) => {
-  try {
-    const { draftOrderIds, sendEmails = false, completeOrders = false } = req.body;
-
-    if (!draftOrderIds || !Array.isArray(draftOrderIds)) {
-      return res.status(400).json({
-        success: false,
-        error: 'draftOrderIds array is required'
-      });
-    }
-
-    const results = [];
-    
-    for (const id of draftOrderIds) {
-      try {
-        const draftResult = await shopifyService.getDraftOrder(id);
-        const draftOrder = draftResult.draft_order;
-
-        if (!draftOrder) {
-          results.push({ id, success: false, error: 'Not found' });
-          continue;
-        }
-
-        const invoiceData = invoiceService.draftOrderToInvoice(draftOrder);
-        const pdfResult = await invoiceService.generatePDF(invoiceData);
-
-        if (completeOrders) {
-          await shopifyService.completeDraftOrder(id, true);
-        }
-
-        if (sendEmails && (draftOrder.customer?.email || draftOrder.email)) {
-          await shopifyService.sendDraftOrderInvoice(id);
-        }
-
-        results.push({
-          id,
-          success: true,
-          invoiceNumber: invoiceData.invoiceNumber,
-          total: invoiceData.total
-        });
-      } catch (err) {
-        results.push({ id, success: false, error: err.message });
-      }
-    }
-
-    res.json({
-      success: true,
-      processed: results.length,
-      successful: results.filter(r => r.success).length,
-      failed: results.filter(r => !r.success).length,
-      results
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * Send invoice email for existing draft order
- */
-router.post('/draft-orders/:id/send-invoice', async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const { to, subject, message } = req.body;
-
-    const result = await shopifyService.sendDraftOrderInvoice(id, {
-      to,
-      subject,
-      message
-    });
-
-    res.json({
-      success: true,
-      result: result.draft_order_invoice
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * List all generated invoices
- */
-router.get('/invoices', (req, res) => {
-  const invoices = invoiceService.listInvoices();
-  res.json({
-    success: true,
-    count: invoices.length,
-    invoices
+// Navigation
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', (e) => {
+    e.preventDefault();
+    const section = item.dataset.section;
+    showSection(section);
   });
 });
 
-/**
- * Download invoice PDF
- */
-router.get('/invoices/:invoiceNumber/download', (req, res, next) => {
+function showSection(sectionName) {
+  // Update nav
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.classList.toggle('active', item.dataset.section === sectionName);
+  });
+  
+  // Update sections
+  document.querySelectorAll('.section').forEach(section => {
+    section.classList.toggle('active', section.id === `${sectionName}-section`);
+  });
+  
+  // Update title
+  const titles = {
+    dashboard: 'Dashboard',
+    quotes: 'Draft Quotes',
+    invoices: 'Invoices',
+    webhooks: 'Webhooks'
+  };
+  document.getElementById('page-title').textContent = titles[sectionName] || sectionName;
+  
+  // Load data for section
+  switch (sectionName) {
+    case 'dashboard':
+      loadStats();
+      break;
+    case 'quotes':
+      loadDraftOrders();
+      break;
+    case 'invoices':
+      loadInvoices();
+      break;
+    case 'webhooks':
+      loadWebhooks();
+      break;
+  }
+}
+
+// Data loading functions
+async function loadStats() {
   try {
-    const filepath = invoiceService.getInvoice(req.params.invoiceNumber);
+    const data = await api('/stats');
+    state.stats = data.stats;
     
-    if (!filepath) {
-      return res.status(404).json({
-        success: false,
-        error: 'Invoice not found'
-      });
-    }
-
-    res.download(filepath);
+    document.getElementById('stat-quotes').textContent = data.stats.openQuotes;
+    document.getElementById('stat-quote-value').textContent = formatCurrency(data.stats.totalQuoteValue);
+    document.getElementById('stat-invoices').textContent = data.stats.invoicesGenerated;
+    document.getElementById('stat-revenue').textContent = formatCurrency(data.stats.monthlyRevenue);
   } catch (error) {
-    next(error);
+    console.error('Failed to load stats:', error);
   }
-});
+}
 
-/**
- * Get orders
- */
-router.get('/orders', async (req, res, next) => {
+async function loadDraftOrders() {
+  const tbody = document.getElementById('quotes-table-body');
+  tbody.innerHTML = '<tr><td colspan="8" class="loading">Loading quotes...</td></tr>';
+  
   try {
-    const { status = 'any', limit = 50 } = req.query;
-    const result = await shopifyService.getOrders({ status, limit });
+    const status = document.getElementById('quote-status-filter').value;
+    const data = await api(`/draft-orders?status=${status}`);
     
-    res.json({
-      success: true,
-      count: result.orders?.length || 0,
-      orders: result.orders || []
+    // Sort by created_at descending (newest first)
+    const sortedOrders = data.draftOrders.sort((a, b) => {
+      return new Date(b.created_at) - new Date(a.created_at);
     });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * Get webhook status
- */
-router.get('/webhooks', async (req, res, next) => {
-  try {
-    const result = await shopifyService.getWebhooks();
-    res.json({
-      success: true,
-      webhooks: result.webhooks || []
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * Register webhooks
- */
-router.post('/webhooks/register', async (req, res, next) => {
-  try {
-    const results = await shopifyService.registerWebhooks();
-    res.json({
-      success: true,
-      results
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * Delete a webhook
- */
-router.delete('/webhooks/:id', async (req, res, next) => {
-  try {
-    await shopifyService.deleteWebhook(req.params.id);
-    res.json({
-      success: true,
-      message: 'Webhook deleted'
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * Search customers
- */
-router.get('/customers/search', async (req, res, next) => {
-  try {
-    const { q } = req.query;
-    if (!q) {
-      return res.status(400).json({
-        success: false,
-        error: 'Search query (q) is required'
-      });
+    
+    state.draftOrders = sortedOrders;
+    state.selectedQuotes.clear();
+    
+    if (sortedOrders.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" class="loading">No draft orders found</td></tr>';
+      return;
     }
-
-    const result = await shopifyService.searchCustomers(q);
-    res.json({
-      success: true,
-      customers: result.customers || []
-    });
+    
+    tbody.innerHTML = sortedOrders.map(order => `
+      <tr>
+        <td>
+          <input type="checkbox" 
+                 class="quote-checkbox" 
+                 data-id="${order.id}"
+                 onchange="toggleQuoteSelection(${order.id})">
+        </td>
+        <td><strong>${order.name}</strong></td>
+        <td>${getCustomerName(order)}</td>
+        <td>${order.email || order.customer?.email || '-'}</td>
+        <td>${formatCurrency(order.total_price)}</td>
+        <td>${formatDate(order.created_at)}</td>
+        <td><span class="status-badge ${order.status}">${order.status}</span></td>
+        <td>
+          <button class="btn btn-sm btn-success" onclick="sendQuoteEmail(${order.id})" title="Generate invoice + email">
+            Send
+          </button>
+          <button class="btn btn-sm btn-primary" onclick="createInvoice(${order.id})">
+            Invoice
+          </button>
+          <button class="btn btn-sm btn-secondary" onclick="viewQuoteDetails(${order.id})">
+            View
+          </button>
+        </td>
+      </tr>
+    `).join('');
   } catch (error) {
-    next(error);
+    tbody.innerHTML = '<tr><td colspan="8" class="loading">Failed to load quotes</td></tr>';
   }
-});
+}
 
-/**
- * Dashboard stats
- */
-router.get('/stats', async (req, res, next) => {
+async function loadInvoices() {
+  const tbody = document.getElementById('invoices-table-body');
+  tbody.innerHTML = '<tr><td colspan="3" class="loading">Loading invoices...</td></tr>';
+  
   try {
-    const [draftOrders, orders, invoices] = await Promise.all([
-      shopifyService.getDraftOrders({ status: 'open', limit: 250 }),
-      shopifyService.getOrders({ status: 'any', limit: 250 }),
-      Promise.resolve(invoiceService.listInvoices())
+    const data = await api('/invoices');
+    state.invoices = data.invoices;
+    
+    if (data.invoices.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" class="loading">No invoices generated yet</td></tr>';
+      return;
+    }
+    
+    tbody.innerHTML = data.invoices.map(invoice => `
+      <tr>
+        <td><strong>${invoice.invoiceNumber}</strong></td>
+        <td>${formatDate(invoice.createdAt)}</td>
+        <td>
+          <button class="btn btn-sm btn-primary" onclick="downloadInvoice('${invoice.invoiceNumber}')">
+            Download PDF
+          </button>
+        </td>
+      </tr>
+    `).join('');
+  } catch (error) {
+    tbody.innerHTML = '<tr><td colspan="3" class="loading">Failed to load invoices</td></tr>';
+  }
+}
+
+async function loadWebhooks() {
+  const tbody = document.getElementById('webhooks-table-body');
+  tbody.innerHTML = '<tr><td colspan="5" class="loading">Loading webhooks...</td></tr>';
+  
+  try {
+    const data = await api('/webhooks');
+    state.webhooks = data.webhooks;
+    
+    if (data.webhooks.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="loading">No webhooks registered. Click "Register Webhooks" to set them up.</td></tr>';
+      return;
+    }
+    
+    tbody.innerHTML = data.webhooks.map(webhook => `
+      <tr>
+        <td>${webhook.id}</td>
+        <td><code>${webhook.topic}</code></td>
+        <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;">${webhook.address}</td>
+        <td>${webhook.format}</td>
+        <td>
+          <button class="btn btn-sm btn-danger" onclick="deleteWebhook(${webhook.id})">
+            Delete
+          </button>
+        </td>
+      </tr>
+    `).join('');
+  } catch (error) {
+    tbody.innerHTML = '<tr><td colspan="5" class="loading">Failed to load webhooks</td></tr>';
+  }
+}
+
+// Quote actions
+function toggleQuoteSelection(id) {
+  if (state.selectedQuotes.has(id)) {
+    state.selectedQuotes.delete(id);
+  } else {
+    state.selectedQuotes.add(id);
+  }
+}
+
+function toggleAllQuotes() {
+  const selectAll = document.getElementById('select-all-quotes').checked;
+  const checkboxes = document.querySelectorAll('.quote-checkbox');
+  
+  state.selectedQuotes.clear();
+  checkboxes.forEach(cb => {
+    cb.checked = selectAll;
+    if (selectAll) {
+      state.selectedQuotes.add(parseInt(cb.dataset.id));
+    }
+  });
+}
+
+async function createInvoice(draftOrderId) {
+  showModal('Create Invoice', `
+    <p>Create an invoice for this draft order?</p>
+    <div style="margin-top: 16px;">
+      <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+        <input type="checkbox" id="send-email-checkbox">
+        Send invoice email to customer
+      </label>
+      <label style="display: flex; align-items: center; gap: 8px;">
+        <input type="checkbox" id="complete-order-checkbox">
+        Complete draft order (convert to real order)
+      </label>
+    </div>
+  `, [
+    { text: 'Cancel', class: 'btn-secondary', onclick: 'closeModal()' },
+    { text: 'Create Invoice', class: 'btn-primary', onclick: `confirmCreateInvoice(${draftOrderId})` }
+  ]);
+}
+
+async function confirmCreateInvoice(draftOrderId) {
+  const sendEmail = document.getElementById('send-email-checkbox').checked;
+  const completeOrder = document.getElementById('complete-order-checkbox').checked;
+  
+  closeModal();
+  showToast('Creating invoice...', 'info');
+  
+  try {
+    const data = await api(`/draft-orders/${draftOrderId}/create-invoice`, {
+      method: 'POST',
+      body: JSON.stringify({ sendEmail, completeOrder })
+    });
+    
+    showToast(`Invoice ${data.invoice.invoiceNumber} created successfully!`, 'success');
+    loadDraftOrders();
+    loadStats();
+    
+    // Offer to download
+    showModal('Invoice Created', `
+      <div class="invoice-preview">
+        <div class="company-name">${data.invoice.company.name}</div>
+        <div class="invoice-title">INVOICE</div>
+        <p><strong>Invoice #:</strong> ${data.invoice.invoiceNumber}</p>
+        <p><strong>Customer:</strong> ${data.invoice.customer.name}</p>
+        <p><strong>Total:</strong> ${formatCurrency(data.invoice.total)}</p>
+        <p><strong>Due Date:</strong> ${data.invoice.dueDate}</p>
+      </div>
+    `, [
+      { text: 'Close', class: 'btn-secondary', onclick: 'closeModal()' },
+      { text: 'Download PDF', class: 'btn-primary', onclick: `downloadInvoice('${data.invoice.invoiceNumber}'); closeModal();` }
     ]);
-
-    const openQuotes = draftOrders.draft_orders || [];
-    const allOrders = orders.orders || [];
-
-    const totalQuoteValue = openQuotes.reduce((sum, q) => 
-      sum + parseFloat(q.total_price || 0), 0
-    );
-
-    const recentOrders = allOrders.filter(o => {
-      const created = new Date(o.created_at);
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      return created >= thirtyDaysAgo;
-    });
-
-    const monthlyRevenue = recentOrders.reduce((sum, o) => 
-      sum + parseFloat(o.total_price || 0), 0
-    );
-
-    res.json({
-      success: true,
-      stats: {
-        openQuotes: openQuotes.length,
-        totalQuoteValue,
-        invoicesGenerated: invoices.length,
-        recentOrders: recentOrders.length,
-        monthlyRevenue
-      }
-    });
   } catch (error) {
-    next(error);
+    showToast('Failed to create invoice', 'error');
+  }
+}
+
+async function batchCreateInvoices() {
+  if (state.selectedQuotes.size === 0) {
+    showToast('Please select at least one quote', 'error');
+    return;
+  }
+  
+  const count = state.selectedQuotes.size;
+  showModal('Batch Create Invoices', `
+    <p>Create invoices for <strong>${count}</strong> selected quote(s)?</p>
+    <div style="margin-top: 16px;">
+      <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+        <input type="checkbox" id="batch-send-email">
+        Send invoice emails to customers
+      </label>
+      <label style="display: flex; align-items: center; gap: 8px;">
+        <input type="checkbox" id="batch-complete-order">
+        Complete draft orders (convert to real orders)
+      </label>
+    </div>
+  `, [
+    { text: 'Cancel', class: 'btn-secondary', onclick: 'closeModal()' },
+    { text: `Create ${count} Invoice(s)`, class: 'btn-primary', onclick: 'confirmBatchCreate()' }
+  ]);
+}
+
+async function confirmBatchCreate() {
+  const sendEmails = document.getElementById('batch-send-email').checked;
+  const completeOrders = document.getElementById('batch-complete-order').checked;
+  const draftOrderIds = Array.from(state.selectedQuotes);
+  
+  closeModal();
+  showToast(`Creating ${draftOrderIds.length} invoices...`, 'info');
+  
+  try {
+    const data = await api('/draft-orders/batch-invoice', {
+      method: 'POST',
+      body: JSON.stringify({ draftOrderIds, sendEmails, completeOrders })
+    });
+    
+    showToast(`Created ${data.successful} of ${data.processed} invoices`, 
+              data.failed > 0 ? 'error' : 'success');
+    
+    loadDraftOrders();
+    loadStats();
+  } catch (error) {
+    showToast('Batch creation failed', 'error');
+  }
+}
+
+function viewQuoteDetails(draftOrderId) {
+  const order = state.draftOrders.find(o => o.id === draftOrderId);
+  if (!order) return;
+  
+  const lineItems = (order.line_items || []).map(item => `
+    <tr>
+      <td>${item.title}${item.variant_title ? ` - ${item.variant_title}` : ''}</td>
+      <td>${item.quantity}</td>
+      <td>${formatCurrency(item.price)}</td>
+      <td>${formatCurrency(item.price * item.quantity)}</td>
+    </tr>
+  `).join('');
+  
+  showModal(`Quote ${order.name}`, `
+    <div style="margin-bottom: 20px;">
+      <h4 style="margin-bottom: 8px; color: var(--text-secondary);">Customer</h4>
+      <p><strong>${getCustomerName(order)}</strong></p>
+      <p>${order.email || order.customer?.email || 'No email'}</p>
+      ${order.billing_address ? `<p>${order.billing_address.address1 || ''}</p>` : ''}
+    </div>
+    
+    <h4 style="margin-bottom: 8px; color: var(--text-secondary);">Line Items</h4>
+    <table class="data-table" style="margin-bottom: 20px;">
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th>Qty</th>
+          <th>Price</th>
+          <th>Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${lineItems || '<tr><td colspan="4">No items</td></tr>'}
+      </tbody>
+    </table>
+    
+    <div style="text-align: right;">
+      <p><strong>Subtotal:</strong> ${formatCurrency(order.subtotal_price)}</p>
+      <p><strong>Shipping:</strong> ${formatCurrency(order.total_shipping_price_set?.shop_money?.amount || 0)}</p>
+      <p><strong>Tax:</strong> ${formatCurrency(order.total_tax)}</p>
+      <p style="font-size: 18px;"><strong>Total:</strong> ${formatCurrency(order.total_price)}</p>
+    </div>
+    
+    ${order.note ? `<div style="margin-top: 20px;"><h4>Note</h4><p>${order.note}</p></div>` : ''}
+  `, [
+    { text: 'Close', class: 'btn-secondary', onclick: 'closeModal()' },
+    { text: 'Create Invoice', class: 'btn-primary', onclick: `closeModal(); createInvoice(${order.id});` }
+  ]);
+}
+
+// Invoice actions
+function downloadInvoice(invoiceNumber) {
+  window.open(`/api/invoices/${invoiceNumber}/download`, '_blank');
+}
+
+// Webhook actions
+async function registerWebhooks() {
+  showToast('Registering webhooks...', 'info');
+  
+  try {
+    const data = await api('/webhooks/register', { method: 'POST' });
+    
+    const created = data.results.filter(r => r.status === 'created').length;
+    const existing = data.results.filter(r => r.status === 'exists').length;
+    const errors = data.results.filter(r => r.status === 'error').length;
+    
+    showToast(`Registered: ${created}, Already existed: ${existing}, Errors: ${errors}`, 
+              errors > 0 ? 'error' : 'success');
+    
+    loadWebhooks();
+  } catch (error) {
+    showToast('Failed to register webhooks', 'error');
+  }
+}
+
+async function deleteWebhook(webhookId) {
+  if (!confirm('Are you sure you want to delete this webhook?')) return;
+  
+  try {
+    await api(`/webhooks/${webhookId}`, { method: 'DELETE' });
+    showToast('Webhook deleted', 'success');
+    loadWebhooks();
+  } catch (error) {
+    showToast('Failed to delete webhook', 'error');
+  }
+}
+
+// Utility functions
+function formatCurrency(amount) {
+  const num = parseFloat(amount) || 0;
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD'
+  }).format(num);
+}
+
+function formatDate(dateString) {
+  if (!dateString) return '-';
+  return new Date(dateString).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  });
+}
+
+function getCustomerName(order) {
+  if (order.customer) {
+    return `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim() || 'Guest';
+  }
+  if (order.billing_address) {
+    return order.billing_address.name || 'Guest';
+  }
+  return 'Guest';
+}
+
+// Modal functions
+function showModal(title, bodyHtml, buttons = []) {
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-body').innerHTML = bodyHtml;
+  
+  const footer = document.getElementById('modal-footer');
+  footer.innerHTML = buttons.map(btn => 
+    `<button class="btn ${btn.class}" onclick="${btn.onclick}">${btn.text}</button>`
+  ).join('');
+  
+  document.getElementById('modal').classList.add('active');
+}
+
+function closeModal() {
+  document.getElementById('modal').classList.remove('active');
+}
+
+// Close modal on outside click
+document.getElementById('modal').addEventListener('click', (e) => {
+  if (e.target.id === 'modal') {
+    closeModal();
   }
 });
 
-module.exports = router;
+// Toast notifications
+function showToast(message, type = 'info') {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  
+  container.appendChild(toast);
+  
+  setTimeout(() => {
+    toast.style.animation = 'toastSlide 0.3s ease reverse';
+    setTimeout(() => toast.remove(), 300);
+  }, 4000);
+}
+
+// Refresh data
+function refreshData() {
+  const activeSection = document.querySelector('.section.active');
+  if (activeSection) {
+    const sectionName = activeSection.id.replace('-section', '');
+    showSection(sectionName);
+  }
+  showToast('Data refreshed', 'success');
+}
+
+// Send Quote + Email
+async function sendQuoteEmail(draftOrderId) {
+  showToast('Generating invoice and email...', 'info');
+  
+  try {
+    // First generate the invoice
+    const invoiceData = await api(`/draft-orders/${draftOrderId}/create-invoice`, {
+      method: 'POST',
+      body: JSON.stringify({ sendEmail: false, completeOrder: false })
+    });
+    
+    // Then generate the email
+    const emailData = await api(`/draft-orders/${draftOrderId}/generate-email`, {
+      method: 'POST'
+    });
+    
+    // Show modal with email and download option
+    showModal('Send Quote Email', `
+      <div style="margin-bottom: 16px;">
+        <strong>To:</strong> ${emailData.to}<br>
+        <strong>Subject:</strong> ${emailData.subject}
+      </div>
+      <div style="margin-bottom: 16px;">
+        <label style="font-weight: bold; display: block; margin-bottom: 8px;">Email Body:</label>
+        <textarea id="email-body" style="width: 100%; height: 200px; padding: 12px; border: 1px solid #374151; border-radius: 8px; background: #1f2937; color: #f3f4f6; font-family: inherit; resize: vertical;">${emailData.body}</textarea>
+      </div>
+      <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+        <button class="btn btn-secondary" onclick="copyEmailToClipboard()">
+          📋 Copy Email
+        </button>
+        <button class="btn btn-secondary" onclick="downloadInvoice('${invoiceData.invoice.invoiceNumber}')">
+          📄 Download Invoice
+        </button>
+      </div>
+    `, [
+      { text: 'Cancel', class: 'btn-secondary', onclick: 'closeModal()' },
+      { text: 'Open in Gmail', class: 'btn-primary', onclick: `openInGmail('${emailData.to}', '${encodeURIComponent(emailData.subject)}')` }
+    ]);
+    
+  } catch (error) {
+    showToast('Failed to generate email: ' + error.message, 'error');
+  }
+}
+
+function copyEmailToClipboard() {
+  const emailBody = document.getElementById('email-body').value;
+  navigator.clipboard.writeText(emailBody).then(() => {
+    showToast('Email copied to clipboard!', 'success');
+  });
+}
+
+function openInGmail(to, subject) {
+  const emailBody = document.getElementById('email-body').value;
+  const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${to}&su=${subject}&body=${encodeURIComponent(emailBody)}`;
+  window.open(gmailUrl, '_blank');
+  closeModal();
+  showToast('Gmail opened - attach the invoice PDF!', 'info');
+}
+
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+  showSection('dashboard');
+});
