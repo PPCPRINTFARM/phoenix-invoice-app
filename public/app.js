@@ -192,7 +192,7 @@ const productDatabase = {
     vfdVsRotary: 'https://phoenixphaseconverters.com/blogs/news/digital-vfd-vs-rotary-phase-converters-why-rotary-is-the-smarter-choice',
     knowledgeBase: 'https://phoenixphaseconverters.com/pages/knowledge-base',
     support: 'https://phoenixphaseconverters.com/pages/support-page',
-    downloadApp: 'https://phoenixphaseconverters.com/pages/download-app'
+    downloadApp: 'https://phoenixphaseconverters.com/pages/phoenix-app-walk-through'
   },
   
   // Extract model from product title
