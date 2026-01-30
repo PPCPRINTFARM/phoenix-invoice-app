@@ -39,9 +39,8 @@ class ShopifyService {
    */
   async getDraftOrders(params = {}) {
     const queryParams = new URLSearchParams({
-      limit: params.limit || 50,
-      status: params.status || 'open',
-      ...params
+      limit: params.limit || 250,
+      ...(params.status && params.status !== 'any' && { status: params.status })
     }).toString();
     
     return this.request('GET', `/draft_orders.json?${queryParams}`);
