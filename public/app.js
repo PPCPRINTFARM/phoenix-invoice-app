@@ -59,6 +59,7 @@ function showSection(sectionName) {
   // Update title
   const titles = {
     dashboard: 'Dashboard',
+    'create-quote': 'Create New Quote',
     quotes: 'Draft Quotes',
     invoices: 'Invoices',
     webhooks: 'Webhooks'
@@ -576,6 +577,291 @@ function openInGmail(to, subject) {
   closeModal();
   showToast('Gmail opened - attach the invoice PDF!', 'info');
 }
+
+// ========== CREATE QUOTE FUNCTIONS ==========
+
+// Store for quote line items
+const quoteLineItems = [];
+let searchTimeout = null;
+let selectedCustomerId = null;
+
+// Search customers
+async function searchCustomers(query) {
+  const resultsDiv = document.getElementById('customer-search-results');
+  
+  if (!query || query.length < 2) {
+    resultsDiv.classList.remove('active');
+    return;
+  }
+  
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(async () => {
+    try {
+      const data = await api(`/customers/search?q=${encodeURIComponent(query)}`);
+      
+      if (data.customers && data.customers.length > 0) {
+        resultsDiv.innerHTML = data.customers.map(c => `
+          <div class="search-result-item" onclick="selectCustomer(${JSON.stringify(c).replace(/"/g, '&quot;')})">
+            <div class="title">${c.first_name || ''} ${c.last_name || ''}</div>
+            <div class="subtitle">${c.email || 'No email'} | ${c.phone || 'No phone'}</div>
+          </div>
+        `).join('');
+        resultsDiv.classList.add('active');
+      } else {
+        resultsDiv.innerHTML = '<div class="search-result-item"><div class="subtitle">No customers found</div></div>';
+        resultsDiv.classList.add('active');
+      }
+    } catch (error) {
+      console.error('Customer search error:', error);
+    }
+  }, 300);
+}
+
+// Select customer from search
+function selectCustomer(customer) {
+  selectedCustomerId = customer.id;
+  document.getElementById('customer-first-name').value = customer.first_name || '';
+  document.getElementById('customer-last-name').value = customer.last_name || '';
+  document.getElementById('customer-email').value = customer.email || '';
+  document.getElementById('customer-phone').value = customer.phone || '';
+  
+  // Fill address if available
+  if (customer.default_address) {
+    const addr = customer.default_address;
+    document.getElementById('shipping-address1').value = addr.address1 || '';
+    document.getElementById('shipping-address2').value = addr.address2 || '';
+    document.getElementById('shipping-city').value = addr.city || '';
+    document.getElementById('shipping-state').value = addr.province || '';
+    document.getElementById('shipping-zip').value = addr.zip || '';
+  }
+  
+  document.getElementById('customer-search').value = `${customer.first_name || ''} ${customer.last_name || ''}`.trim();
+  document.getElementById('customer-search-results').classList.remove('active');
+  showToast('Customer selected!', 'success');
+}
+
+// Search products
+async function searchProducts(query) {
+  const resultsDiv = document.getElementById('product-search-results');
+  
+  if (!query || query.length < 2) {
+    resultsDiv.classList.remove('active');
+    return;
+  }
+  
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(async () => {
+    try {
+      const data = await api(`/products/search?q=${encodeURIComponent(query)}`);
+      
+      if (data.products && data.products.length > 0) {
+        resultsDiv.innerHTML = data.products.map(p => {
+          const variant = p.variants?.[0];
+          const price = variant?.price || '0.00';
+          const image = p.image?.src || p.images?.[0]?.src || '';
+          return `
+            <div class="search-result-item" onclick='addProductToQuote(${JSON.stringify({
+              id: p.id,
+              variantId: variant?.id,
+              title: p.title,
+              price: price,
+              image: image,
+              sku: variant?.sku || ''
+            }).replace(/'/g, "&#39;")})'>
+              <div class="title">${p.title}</div>
+              <div class="subtitle">${variant?.sku || 'No SKU'}</div>
+              <div class="price">$${parseFloat(price).toFixed(2)}</div>
+            </div>
+          `;
+        }).join('');
+        resultsDiv.classList.add('active');
+      } else {
+        resultsDiv.innerHTML = '<div class="search-result-item"><div class="subtitle">No products found</div></div>';
+        resultsDiv.classList.add('active');
+      }
+    } catch (error) {
+      console.error('Product search error:', error);
+    }
+  }, 300);
+}
+
+// Add product to quote
+function addProductToQuote(product) {
+  // Check if already in list
+  const existing = quoteLineItems.find(item => item.variantId === product.variantId);
+  if (existing) {
+    existing.quantity++;
+  } else {
+    quoteLineItems.push({
+      ...product,
+      quantity: 1
+    });
+  }
+  
+  renderLineItems();
+  document.getElementById('product-search').value = '';
+  document.getElementById('product-search-results').classList.remove('active');
+  showToast(`Added ${product.title}`, 'success');
+}
+
+// Remove product from quote
+function removeFromQuote(variantId) {
+  const index = quoteLineItems.findIndex(item => item.variantId === variantId);
+  if (index > -1) {
+    quoteLineItems.splice(index, 1);
+    renderLineItems();
+  }
+}
+
+// Update quantity
+function updateQuantity(variantId, quantity) {
+  const item = quoteLineItems.find(i => i.variantId === variantId);
+  if (item) {
+    item.quantity = Math.max(1, parseInt(quantity) || 1);
+    renderLineItems();
+  }
+}
+
+// Render line items
+function renderLineItems() {
+  const container = document.getElementById('quote-line-items');
+  
+  if (quoteLineItems.length === 0) {
+    container.innerHTML = '<p class="empty-state">No products added yet. Search above to add products.</p>';
+    document.getElementById('quote-subtotal').textContent = '$0.00';
+    document.getElementById('quote-total').textContent = '$0.00';
+    return;
+  }
+  
+  let subtotal = 0;
+  
+  container.innerHTML = quoteLineItems.map(item => {
+    const lineTotal = parseFloat(item.price) * item.quantity;
+    subtotal += lineTotal;
+    return `
+      <div class="line-item">
+        <img src="${item.image || 'https://via.placeholder.com/60'}" alt="${item.title}" class="line-item-image">
+        <div class="line-item-info">
+          <div class="name">${item.title}</div>
+          <div class="variant">${item.sku || ''}</div>
+        </div>
+        <div class="line-item-qty">
+          <input type="number" value="${item.quantity}" min="1" onchange="updateQuantity(${item.variantId}, this.value)">
+          <span>× $${parseFloat(item.price).toFixed(2)}</span>
+        </div>
+        <div class="line-item-price">$${lineTotal.toFixed(2)}</div>
+        <button class="line-item-remove" onclick="removeFromQuote(${item.variantId})">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+    `;
+  }).join('');
+  
+  document.getElementById('quote-subtotal').textContent = `$${subtotal.toFixed(2)}`;
+  document.getElementById('quote-total').textContent = `$${subtotal.toFixed(2)}`;
+}
+
+// Clear quote form
+function clearQuoteForm() {
+  selectedCustomerId = null;
+  quoteLineItems.length = 0;
+  
+  document.getElementById('customer-search').value = '';
+  document.getElementById('customer-first-name').value = '';
+  document.getElementById('customer-last-name').value = '';
+  document.getElementById('customer-email').value = '';
+  document.getElementById('customer-phone').value = '';
+  document.getElementById('shipping-address1').value = '';
+  document.getElementById('shipping-address2').value = '';
+  document.getElementById('shipping-city').value = '';
+  document.getElementById('shipping-state').value = '';
+  document.getElementById('shipping-zip').value = '';
+  document.getElementById('quote-notes').value = '';
+  
+  renderLineItems();
+  showToast('Form cleared', 'info');
+}
+
+// Create quote in Shopify
+async function createQuote() {
+  if (quoteLineItems.length === 0) {
+    showToast('Please add at least one product', 'error');
+    return;
+  }
+  
+  const email = document.getElementById('customer-email').value;
+  if (!email) {
+    showToast('Customer email is required', 'error');
+    return;
+  }
+  
+  showToast('Creating quote in Shopify...', 'info');
+  
+  try {
+    const quoteData = {
+      customer: selectedCustomerId ? { id: selectedCustomerId } : {
+        firstName: document.getElementById('customer-first-name').value,
+        lastName: document.getElementById('customer-last-name').value,
+        email: email,
+        phone: document.getElementById('customer-phone').value
+      },
+      lineItems: quoteLineItems.map(item => ({
+        variantId: item.variantId,
+        quantity: item.quantity
+      })),
+      shippingAddress: {
+        firstName: document.getElementById('customer-first-name').value,
+        lastName: document.getElementById('customer-last-name').value,
+        address1: document.getElementById('shipping-address1').value,
+        address2: document.getElementById('shipping-address2').value,
+        city: document.getElementById('shipping-city').value,
+        state: document.getElementById('shipping-state').value,
+        zip: document.getElementById('shipping-zip').value,
+        country: 'US',
+        phone: document.getElementById('customer-phone').value
+      },
+      note: document.getElementById('quote-notes').value
+    };
+    
+    const result = await api('/draft-orders', {
+      method: 'POST',
+      body: JSON.stringify(quoteData)
+    });
+    
+    showToast(`Quote ${result.draftOrder.name} created successfully!`, 'success');
+    clearQuoteForm();
+    
+    // Refresh draft orders and switch to quotes view
+    loadDraftOrders();
+    showSection('quotes');
+    
+    return result.draftOrder;
+  } catch (error) {
+    showToast('Failed to create quote: ' + error.message, 'error');
+    return null;
+  }
+}
+
+// Create quote and send email
+async function createQuoteAndSend() {
+  const draftOrder = await createQuote();
+  
+  if (draftOrder) {
+    // Wait a moment for Shopify to process, then generate email
+    setTimeout(async () => {
+      await sendQuoteEmail(draftOrder.id);
+    }, 1000);
+  }
+}
+
+// Close search results when clicking outside
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.search-container')) {
+    document.querySelectorAll('.search-results').forEach(el => el.classList.remove('active'));
+  }
+});
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
