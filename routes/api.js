@@ -17,10 +17,15 @@ router.get('/draft-orders', async (req, res, next) => {
     const { status = 'any', limit = 250 } = req.query;
     const result = await shopifyService.getDraftOrders({ status, limit });
     
+    // Sort by created_at descending (newest first)
+    const sortedDraftOrders = (result.draft_orders || []).sort((a, b) => {
+      return new Date(b.created_at) - new Date(a.created_at);
+    });
+    
     res.json({
       success: true,
-      count: result.draft_orders?.length || 0,
-      draftOrders: result.draft_orders || []
+      count: sortedDraftOrders.length,
+      draftOrders: sortedDraftOrders
     });
   } catch (error) {
     next(error);
