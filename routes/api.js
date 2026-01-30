@@ -1,379 +1,234 @@
 /**
- * API Routes
- * Handles draft orders, invoices, and webhook management
+ * Shopify API Service
+ * Handles all Shopify API interactions including draft orders, orders, and webhooks
  */
 
-const express = require('express');
-const router = express.Router();
-const shopifyService = require('../services/shopify');
-const invoiceService = require('../services/invoice');
-const path = require('path');
+const axios = require('axios');
 
-/**
- * Get all draft orders (quotes)
- */
-router.get('/draft-orders', async (req, res, next) => {
-  try {
-    const { status = 'any', limit = 250 } = req.query;
-    const result = await shopifyService.getDraftOrders({ status, limit });
-    
-    // Sort by created_at descending (newest first)
-    const sortedDraftOrders = (result.draft_orders || []).sort((a, b) => {
-      return new Date(b.created_at) - new Date(a.created_at);
-    });
-    
-    res.json({
-      success: true,
-      count: sortedDraftOrders.length,
-      draftOrders: sortedDraftOrders
-    });
-  } catch (error) {
-    next(error);
+class ShopifyService {
+  constructor() {
+    this.baseUrl = `https://${process.env.SHOPIFY_STORE_URL}/admin/api/2024-01`;
+    this.headers = {
+      'X-Shopify-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN,
+      'Content-Type': 'application/json'
+    };
   }
-});
 
-/**
- * Get single draft order
- */
-router.get('/draft-orders/:id', async (req, res, next) => {
-  try {
-    const result = await shopifyService.getDraftOrder(req.params.id);
-    res.json({
-      success: true,
-      draftOrder: result.draft_order
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * Convert draft order to invoice
- */
-router.post('/draft-orders/:id/create-invoice', async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const { sendEmail = false, completeOrder = false } = req.body;
-
-    // Get draft order
-    const draftResult = await shopifyService.getDraftOrder(id);
-    const draftOrder = draftResult.draft_order;
-
-    if (!draftOrder) {
-      return res.status(404).json({
-        success: false,
-        error: 'Draft order not found'
-      });
-    }
-
-    // Convert to invoice data
-    const invoiceData = invoiceService.draftOrderToInvoice(draftOrder);
-
-    // Fetch product images from Shopify products API
-    for (const item of invoiceData.lineItems) {
-      if (!item.image && item.productId) {
-        try {
-          const productResult = await shopifyService.getProduct(item.productId);
-          if (productResult.product?.image?.src) {
-            item.image = productResult.product.image.src;
-          } else if (productResult.product?.images?.[0]?.src) {
-            item.image = productResult.product.images[0].src;
-          }
-        } catch (err) {
-          console.log(`Could not fetch product image for ${item.productId}:`, err.message);
-        }
-      }
-    }
-
-    // Generate PDF
-    const pdfResult = await invoiceService.generatePDF(invoiceData);
-
-    // Optionally complete the draft order (convert to real order)
-    let order = null;
-    if (completeOrder) {
-      const orderResult = await shopifyService.completeDraftOrder(id, true);
-      order = orderResult.draft_order;
+  /**
+   * Make authenticated request to Shopify API
+   */
+  async request(method, endpoint, data = null) {
+    try {
+      const config = {
+        method,
+        url: `${this.baseUrl}${endpoint}`,
+        headers: this.headers,
+        ...(data && { data })
+      };
       
-      // Store invoice metadata on the order
-      if (order?.order_id) {
-        await shopifyService.createOrderMetafield(order.order_id, {
-          invoiceNumber: invoiceData.invoiceNumber,
-          createdAt: invoiceData.createdAt,
-          pdfFile: pdfResult.filename
-        });
-      }
+      const response = await axios(config);
+      return response.data;
+    } catch (error) {
+      console.error(`Shopify API Error [${endpoint}]:`, error.response?.data || error.message);
+      throw new Error(error.response?.data?.errors || error.message);
     }
-
-    // Optionally send invoice email via Shopify
-    if (sendEmail) {
-      const customerEmail = draftOrder.customer?.email || draftOrder.email;
-      if (customerEmail) {
-        await shopifyService.sendDraftOrderInvoice(id, {
-          to: customerEmail,
-          subject: `Invoice ${invoiceData.invoiceNumber} from ${process.env.COMPANY_NAME}`,
-          message: `Please find your invoice attached. Invoice #: ${invoiceData.invoiceNumber}. Total: $${invoiceData.total.toFixed(2)}`
-        });
-      }
-    }
-
-    res.json({
-      success: true,
-      invoice: invoiceData,
-      pdf: {
-        filename: pdfResult.filename,
-        downloadUrl: `/api/invoices/${invoiceData.invoiceNumber}/download`
-      },
-      order: order,
-      emailSent: sendEmail
-    });
-  } catch (error) {
-    next(error);
   }
-});
 
-/**
- * Batch convert multiple draft orders to invoices
- */
-router.post('/draft-orders/batch-invoice', async (req, res, next) => {
-  try {
-    const { draftOrderIds, sendEmails = false, completeOrders = false } = req.body;
+  /**
+   * Get all draft orders (quotes)
+   */
+  async getDraftOrders(params = {}) {
+    const queryParams = new URLSearchParams({
+      limit: params.limit || 250,
+      ...(params.status && params.status !== 'any' && { status: params.status })
+    }).toString();
+    
+    return this.request('GET', `/draft_orders.json?${queryParams}`);
+  }
 
-    if (!draftOrderIds || !Array.isArray(draftOrderIds)) {
-      return res.status(400).json({
-        success: false,
-        error: 'draftOrderIds array is required'
-      });
-    }
+  /**
+   * Get single draft order by ID
+   */
+  async getDraftOrder(id) {
+    return this.request('GET', `/draft_orders/${id}.json`);
+  }
 
+  /**
+   * Update a draft order
+   */
+  async updateDraftOrder(id, data) {
+    return this.request('PUT', `/draft_orders/${id}.json`, { draft_order: data });
+  }
+
+  /**
+   * Complete/convert draft order to real order (creates invoice)
+   */
+  async completeDraftOrder(id, paymentPending = true) {
+    return this.request('PUT', `/draft_orders/${id}/complete.json?payment_pending=${paymentPending}`);
+  }
+
+  /**
+   * Send invoice for draft order
+   */
+  async sendDraftOrderInvoice(id, invoiceData = {}) {
+    const data = {
+      draft_order_invoice: {
+        to: invoiceData.to || null,
+        from: invoiceData.from || process.env.COMPANY_EMAIL,
+        subject: invoiceData.subject || `Invoice from ${process.env.COMPANY_NAME}`,
+        custom_message: invoiceData.message || 'Thank you for your order. Please find your invoice attached.',
+        bcc: invoiceData.bcc || []
+      }
+    };
+    
+    return this.request('POST', `/draft_orders/${id}/send_invoice.json`, data);
+  }
+
+  /**
+   * Get all orders
+   */
+  async getOrders(params = {}) {
+    const queryParams = new URLSearchParams({
+      limit: params.limit || 50,
+      status: params.status || 'any',
+      ...params
+    }).toString();
+    
+    return this.request('GET', `/orders.json?${queryParams}`);
+  }
+
+  /**
+   * Get single order
+   */
+  async getOrder(id) {
+    return this.request('GET', `/orders/${id}.json`);
+  }
+
+  /**
+   * Get customer by ID
+   */
+  async getCustomer(id) {
+    return this.request('GET', `/customers/${id}.json`);
+  }
+
+  /**
+   * Search customers
+   */
+  async searchCustomers(query) {
+    return this.request('GET', `/customers/search.json?query=${encodeURIComponent(query)}`);
+  }
+
+  /**
+   * Get products
+   */
+  async getProducts(params = {}) {
+    const queryParams = new URLSearchParams({
+      limit: params.limit || 50,
+      ...params
+    }).toString();
+    
+    return this.request('GET', `/products.json?${queryParams}`);
+  }
+
+  /**
+   * Get single product by ID
+   */
+  async getProduct(id) {
+    return this.request('GET', `/products/${id}.json`);
+  }
+
+  /**
+   * Create metafield for order (store invoice data)
+   */
+  async createOrderMetafield(orderId, data) {
+    return this.request('POST', `/orders/${orderId}/metafields.json`, {
+      metafield: {
+        namespace: 'phoenix_invoices',
+        key: 'invoice_data',
+        value: JSON.stringify(data),
+        type: 'json'
+      }
+    });
+  }
+
+  /**
+   * Register webhooks
+   */
+  async registerWebhooks() {
+    const webhookTopics = [
+      'draft_orders/create',
+      'draft_orders/update',
+      'draft_orders/delete',
+      'orders/create',
+      'orders/paid',
+      'orders/fulfilled'
+    ];
+
+    const appUrl = process.env.APP_URL;
     const results = [];
-    
-    for (const id of draftOrderIds) {
+
+    // First, get existing webhooks
+    const existingWebhooks = await this.getWebhooks();
+    const existingTopics = existingWebhooks.webhooks?.map(w => w.topic) || [];
+
+    for (const topic of webhookTopics) {
+      // Skip if already registered
+      if (existingTopics.includes(topic)) {
+        console.log(`Webhook already registered: ${topic}`);
+        results.push({ topic, status: 'exists' });
+        continue;
+      }
+
       try {
-        const draftResult = await shopifyService.getDraftOrder(id);
-        const draftOrder = draftResult.draft_order;
-
-        if (!draftOrder) {
-          results.push({ id, success: false, error: 'Not found' });
-          continue;
-        }
-
-        const invoiceData = invoiceService.draftOrderToInvoice(draftOrder);
-        const pdfResult = await invoiceService.generatePDF(invoiceData);
-
-        if (completeOrders) {
-          await shopifyService.completeDraftOrder(id, true);
-        }
-
-        if (sendEmails && (draftOrder.customer?.email || draftOrder.email)) {
-          await shopifyService.sendDraftOrderInvoice(id);
-        }
-
-        results.push({
-          id,
-          success: true,
-          invoiceNumber: invoiceData.invoiceNumber,
-          total: invoiceData.total
+        const result = await this.request('POST', '/webhooks.json', {
+          webhook: {
+            topic,
+            address: `${appUrl}/webhooks/${topic.replace('/', '-')}`,
+            format: 'json'
+          }
         });
-      } catch (err) {
-        results.push({ id, success: false, error: err.message });
+        console.log(`Webhook registered: ${topic}`);
+        results.push({ topic, status: 'created', id: result.webhook?.id });
+      } catch (error) {
+        console.error(`Failed to register webhook ${topic}:`, error.message);
+        results.push({ topic, status: 'error', error: error.message });
       }
     }
 
-    res.json({
-      success: true,
-      processed: results.length,
-      successful: results.filter(r => r.success).length,
-      failed: results.filter(r => !r.success).length,
-      results
-    });
-  } catch (error) {
-    next(error);
+    return results;
   }
-});
 
-/**
- * Send invoice email for existing draft order
- */
-router.post('/draft-orders/:id/send-invoice', async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const { to, subject, message } = req.body;
-
-    const result = await shopifyService.sendDraftOrderInvoice(id, {
-      to,
-      subject,
-      message
-    });
-
-    res.json({
-      success: true,
-      result: result.draft_order_invoice
-    });
-  } catch (error) {
-    next(error);
+  /**
+   * Get all registered webhooks
+   */
+  async getWebhooks() {
+    return this.request('GET', '/webhooks.json');
   }
-});
 
-/**
- * List all generated invoices
- */
-router.get('/invoices', (req, res) => {
-  const invoices = invoiceService.listInvoices();
-  res.json({
-    success: true,
-    count: invoices.length,
-    invoices
-  });
-});
+  /**
+   * Delete a webhook
+   */
+  async deleteWebhook(id) {
+    return this.request('DELETE', `/webhooks/${id}.json`);
+  }
 
-/**
- * Download invoice PDF
- */
-router.get('/invoices/:invoiceNumber/download', (req, res, next) => {
-  try {
-    const filepath = invoiceService.getInvoice(req.params.invoiceNumber);
+  /**
+   * Verify webhook signature
+   */
+  verifyWebhookSignature(body, hmacHeader) {
+    const crypto = require('crypto');
+    const secret = process.env.SHOPIFY_WEBHOOK_SECRET || process.env.SHOPIFY_API_SECRET;
     
-    if (!filepath) {
-      return res.status(404).json({
-        success: false,
-        error: 'Invoice not found'
-      });
-    }
-
-    res.download(filepath);
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * Get orders
- */
-router.get('/orders', async (req, res, next) => {
-  try {
-    const { status = 'any', limit = 50 } = req.query;
-    const result = await shopifyService.getOrders({ status, limit });
+    const hash = crypto
+      .createHmac('sha256', secret)
+      .update(body, 'utf8')
+      .digest('base64');
     
-    res.json({
-      success: true,
-      count: result.orders?.length || 0,
-      orders: result.orders || []
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * Get webhook status
- */
-router.get('/webhooks', async (req, res, next) => {
-  try {
-    const result = await shopifyService.getWebhooks();
-    res.json({
-      success: true,
-      webhooks: result.webhooks || []
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * Register webhooks
- */
-router.post('/webhooks/register', async (req, res, next) => {
-  try {
-    const results = await shopifyService.registerWebhooks();
-    res.json({
-      success: true,
-      results
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * Delete a webhook
- */
-router.delete('/webhooks/:id', async (req, res, next) => {
-  try {
-    await shopifyService.deleteWebhook(req.params.id);
-    res.json({
-      success: true,
-      message: 'Webhook deleted'
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * Search customers
- */
-router.get('/customers/search', async (req, res, next) => {
-  try {
-    const { q } = req.query;
-    if (!q) {
-      return res.status(400).json({
-        success: false,
-        error: 'Search query (q) is required'
-      });
-    }
-
-    const result = await shopifyService.searchCustomers(q);
-    res.json({
-      success: true,
-      customers: result.customers || []
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * Dashboard stats
- */
-router.get('/stats', async (req, res, next) => {
-  try {
-    const [draftOrders, orders, invoices] = await Promise.all([
-      shopifyService.getDraftOrders({ status: 'open', limit: 250 }),
-      shopifyService.getOrders({ status: 'any', limit: 250 }),
-      Promise.resolve(invoiceService.listInvoices())
-    ]);
-
-    const openQuotes = draftOrders.draft_orders || [];
-    const allOrders = orders.orders || [];
-
-    const totalQuoteValue = openQuotes.reduce((sum, q) => 
-      sum + parseFloat(q.total_price || 0), 0
+    return crypto.timingSafeEqual(
+      Buffer.from(hash),
+      Buffer.from(hmacHeader || '')
     );
-
-    const recentOrders = allOrders.filter(o => {
-      const created = new Date(o.created_at);
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      return created >= thirtyDaysAgo;
-    });
-
-    const monthlyRevenue = recentOrders.reduce((sum, o) => 
-      sum + parseFloat(o.total_price || 0), 0
-    );
-
-    res.json({
-      success: true,
-      stats: {
-        openQuotes: openQuotes.length,
-        totalQuoteValue,
-        invoicesGenerated: invoices.length,
-        recentOrders: recentOrders.length,
-        monthlyRevenue
-      }
-    });
-  } catch (error) {
-    next(error);
   }
-});
+}
 
-module.exports = router;
+module.exports = new ShopifyService();
