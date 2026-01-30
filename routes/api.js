@@ -722,6 +722,120 @@ router.delete('/webhooks/:id', async (req, res, next) => {
 });
 
 /**
+ * Search products
+ */
+router.get('/products/search', async (req, res, next) => {
+  try {
+    const { q, limit = 20 } = req.query;
+    if (!q) {
+      return res.status(400).json({ success: false, error: 'Search query (q) is required' });
+    }
+    
+    const result = await shopifyService.searchProducts(q, limit);
+    res.json({
+      success: true,
+      products: result.products || []
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Get all products
+ */
+router.get('/products', async (req, res, next) => {
+  try {
+    const { limit = 50 } = req.query;
+    const result = await shopifyService.getProducts({ limit });
+    res.json({
+      success: true,
+      products: result.products || []
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Create new draft order (quote)
+ */
+router.post('/draft-orders', async (req, res, next) => {
+  try {
+    const { customer, lineItems, note, shippingAddress, billingAddress } = req.body;
+    
+    if (!lineItems || lineItems.length === 0) {
+      return res.status(400).json({ success: false, error: 'At least one line item is required' });
+    }
+    
+    // Build draft order data for Shopify
+    const draftOrderData = {
+      line_items: lineItems.map(item => ({
+        variant_id: item.variantId,
+        quantity: item.quantity,
+        ...(item.price && { price: item.price })
+      })),
+      ...(customer?.id && { customer: { id: customer.id } }),
+      ...(customer?.email && !customer.id && { email: customer.email }),
+      ...(note && { note }),
+      use_customer_default_address: true
+    };
+    
+    // Add customer info if provided without ID
+    if (customer && !customer.id) {
+      if (customer.firstName || customer.lastName || customer.email || customer.phone) {
+        draftOrderData.customer = {
+          first_name: customer.firstName || '',
+          last_name: customer.lastName || '',
+          email: customer.email || '',
+          phone: customer.phone || ''
+        };
+      }
+    }
+    
+    // Add shipping address if provided
+    if (shippingAddress) {
+      draftOrderData.shipping_address = {
+        first_name: shippingAddress.firstName || customer?.firstName || '',
+        last_name: shippingAddress.lastName || customer?.lastName || '',
+        address1: shippingAddress.address1 || '',
+        address2: shippingAddress.address2 || '',
+        city: shippingAddress.city || '',
+        province: shippingAddress.state || shippingAddress.province || '',
+        zip: shippingAddress.zip || '',
+        country: shippingAddress.country || 'US',
+        phone: shippingAddress.phone || customer?.phone || ''
+      };
+    }
+    
+    // Add billing address if provided
+    if (billingAddress) {
+      draftOrderData.billing_address = {
+        first_name: billingAddress.firstName || customer?.firstName || '',
+        last_name: billingAddress.lastName || customer?.lastName || '',
+        address1: billingAddress.address1 || '',
+        address2: billingAddress.address2 || '',
+        city: billingAddress.city || '',
+        province: billingAddress.state || billingAddress.province || '',
+        zip: billingAddress.zip || '',
+        country: billingAddress.country || 'US',
+        phone: billingAddress.phone || customer?.phone || ''
+      };
+    }
+    
+    const result = await shopifyService.createDraftOrder(draftOrderData);
+    
+    res.json({
+      success: true,
+      draftOrder: result.draft_order,
+      message: `Quote ${result.draft_order.name} created successfully!`
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * Search customers
  */
 router.get('/customers/search', async (req, res, next) => {
