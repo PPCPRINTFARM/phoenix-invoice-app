@@ -167,20 +167,23 @@ router.post('/draft-orders/:id/generate-email', async (req, res, next) => {
     
     const productList = products.map(p => `- ${p.name} (Qty: ${p.quantity}) - $${p.price}`).join('\n');
 
-    // Generate email with Claude API
-    const anthropicKey = process.env.ANTHROPIC_API_KEY;
+    // Generate email with OpenAI GPT-4 (knows Glen's writing style)
+    const openaiKey = process.env.OPENAI_API_KEY;
     let emailBody = '';
     let subject = `Your Phoenix Phase Converter Quote ${orderName}`;
     
-    if (anthropicKey) {
+    if (openaiKey) {
       try {
         const axios = require('axios');
-        const response = await axios.post('https://api.anthropic.com/v1/messages', {
-          model: 'claude-sonnet-4-20250514',
+        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+          model: 'gpt-4o',
           max_tokens: 800,
           messages: [{
+            role: 'system',
+            content: `You are Glen from Phoenix Phase Converters. You write friendly, knowledgeable follow-up emails to customers who requested quotes. Your tone is warm but professional - like talking to a neighbor who needs help with their shop. You know phase converters inside and out and genuinely want to help customers get the right solution.`
+          }, {
             role: 'user',
-            content: `Write a friendly, professional follow-up email for Phoenix Phase Converters.
+            content: `Write a follow-up email for this quote:
 
 CUSTOMER: ${customerName}
 ORDER NUMBER: ${orderName}
@@ -190,27 +193,26 @@ ${productList}
 
 INVOICE LINK: ${invoiceUrl}
 
-Write a warm email that:
-1. Thanks them for their interest
-2. Mentions the specific product(s) they're interested in
-3. Highlights key benefits (American-made, 5-year warranty, free shipping, technical support)
-4. Includes the invoice link
-5. Offers to answer any questions
-6. Ends with a friendly sign-off from Glen
+Write the email that:
+1. Thanks them for their interest/call
+2. Mentions the specific product(s) they're looking at
+3. Highlights key benefits (American-made, 5-year warranty, free shipping, 24/7 technical support)
+4. Includes the invoice link naturally
+5. Offers to answer questions about sizing or installation
+6. Signs off as Glen
 
-Keep it concise (under 200 words). Don't include subject line. Just the email body.`
+Keep it conversational and under 200 words. Don't include subject line. Just the email body.`
           }]
         }, {
           headers: {
-            'x-api-key': anthropicKey,
-            'anthropic-version': '2023-06-01',
+            'Authorization': `Bearer ${openaiKey}`,
             'Content-Type': 'application/json'
           }
         });
         
-        emailBody = response.data.content[0].text;
+        emailBody = response.data.choices[0].message.content;
       } catch (aiError) {
-        console.log('Claude API error, using template:', aiError.message);
+        console.log('OpenAI API error, using template:', aiError.message);
         emailBody = generateTemplateEmail(customerName, orderName, totalPrice, products, invoiceUrl);
       }
     } else {
