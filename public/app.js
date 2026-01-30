@@ -516,19 +516,28 @@ async function sendQuoteEmail(draftOrderId) {
       method: 'POST'
     });
     
-    // Show modal with email and download option
+    // Store email data for copy/gmail functions
+    window.currentEmailData = emailData;
+    
+    // Show modal with HTML email preview and download option
     showModal('Send Quote Email', `
       <div style="margin-bottom: 16px;">
         <strong>To:</strong> ${emailData.to}<br>
         <strong>Subject:</strong> ${emailData.subject}
       </div>
       <div style="margin-bottom: 16px;">
-        <label style="font-weight: bold; display: block; margin-bottom: 8px;">Email Body:</label>
-        <textarea id="email-body" style="width: 100%; height: 200px; padding: 12px; border: 1px solid #374151; border-radius: 8px; background: #1f2937; color: #f3f4f6; font-family: inherit; resize: vertical;">${emailData.body}</textarea>
+        <label style="font-weight: bold; display: block; margin-bottom: 8px;">Email Preview:</label>
+        <div id="email-preview" style="background: white; color: #333; padding: 20px; border-radius: 8px; max-height: 400px; overflow-y: auto; border: 1px solid #374151;">
+          ${emailData.body}
+        </div>
+        <input type="hidden" id="email-body-raw" value="${encodeURIComponent(emailData.body)}">
       </div>
       <div style="display: flex; gap: 10px; flex-wrap: wrap;">
         <button class="btn btn-secondary" onclick="copyEmailToClipboard()">
-          📋 Copy Email
+          📋 Copy HTML
+        </button>
+        <button class="btn btn-secondary" onclick="copyEmailAsText()">
+          📝 Copy as Text
         </button>
         <button class="btn btn-secondary" onclick="downloadInvoice('${invoiceData.invoice.invoiceNumber}')">
           📄 Download Invoice
@@ -545,15 +554,24 @@ async function sendQuoteEmail(draftOrderId) {
 }
 
 function copyEmailToClipboard() {
-  const emailBody = document.getElementById('email-body').value;
+  const emailBody = decodeURIComponent(document.getElementById('email-body-raw').value);
   navigator.clipboard.writeText(emailBody).then(() => {
-    showToast('Email copied to clipboard!', 'success');
+    showToast('HTML email copied to clipboard!', 'success');
+  });
+}
+
+function copyEmailAsText() {
+  const emailPreview = document.getElementById('email-preview');
+  const textContent = emailPreview.innerText || emailPreview.textContent;
+  navigator.clipboard.writeText(textContent).then(() => {
+    showToast('Plain text email copied to clipboard!', 'success');
   });
 }
 
 function openInGmail(to, subject) {
-  const emailBody = document.getElementById('email-body').value;
-  const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${to}&su=${subject}&body=${encodeURIComponent(emailBody)}`;
+  const emailPreview = document.getElementById('email-preview');
+  const textContent = emailPreview.innerText || emailPreview.textContent;
+  const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${to}&su=${subject}&body=${encodeURIComponent(textContent)}`;
   window.open(gmailUrl, '_blank');
   closeModal();
   showToast('Gmail opened - attach the invoice PDF!', 'info');
