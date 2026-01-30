@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const http = require('http');
+const QRCode = require('qrcode');
 
 class InvoiceService {
   constructor() {
@@ -98,6 +99,7 @@ class InvoiceService {
       createdAt: new Date().toISOString(),
       quoteDate: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
       validUntil: validUntil.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+      dueDate: validUntil.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
 
       company: {
         name: 'Phoenix Phase Converters',
@@ -366,10 +368,24 @@ class InvoiceService {
         doc.font('Helvetica').fontSize(9)
            .text(invoice.personalMessage.message, margin + 10, y, { width: 260 });
 
-        // QR Code placeholder (right side)
+        // QR Code (right side) - link to payment page
         const qrX = margin + 400;
         const qrY = y - 70;
-        doc.rect(qrX, qrY, 70, 70).lineWidth(1).strokeColor(this.colors.navyBlue).stroke();
+        
+        // Generate QR code linking to payment/checkout page
+        const paymentUrl = `https://phoenixphaseconverters.com/checkout?quote=${invoice.quoteNumber}`;
+        try {
+          const qrDataUrl = await QRCode.toDataURL(paymentUrl, {
+            width: 70,
+            margin: 1,
+            color: { dark: '#0d3b66', light: '#ffffff' }
+          });
+          const qrBuffer = Buffer.from(qrDataUrl.split(',')[1], 'base64');
+          doc.image(qrBuffer, qrX, qrY, { width: 70, height: 70 });
+        } catch (qrErr) {
+          // Fallback: draw empty box if QR fails
+          doc.rect(qrX, qrY, 70, 70).lineWidth(1).strokeColor(this.colors.navyBlue).stroke();
+        }
         doc.font('Helvetica-Bold').fontSize(8).fillColor(this.colors.navyBlue)
            .text('PAY ONLINE', qrX, qrY + 75, { width: 70, align: 'center' });
 
