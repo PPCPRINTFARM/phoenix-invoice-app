@@ -14,7 +14,7 @@ const path = require('path');
  */
 router.get('/draft-orders', async (req, res, next) => {
   try {
-    const { status = 'open', limit = 50 } = req.query;
+    const { status = 'any', limit = 250 } = req.query;
     const result = await shopifyService.getDraftOrders({ status, limit });
     
     res.json({
