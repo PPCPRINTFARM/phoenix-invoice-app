@@ -211,33 +211,53 @@ class InvoiceService {
       try {
         // ========== HEADER ==========
         
-        // Phoenix Logo Text
-        doc.font('Helvetica-Bold')
-           .fontSize(24)
-           .fillColor(this.colors.navyBlue)
-           .text('PHOENIX', margin, 40);
-        
-        doc.font('Helvetica')
-           .fontSize(10)
-           .fillColor(this.colors.orange)
-           .text('PHASE CONVERTERS', margin, 65);
+        // Phoenix Logo Image
+        const logoUrl = 'https://cdn.shopify.com/s/files/1/0680/2538/5243/files/Screenshot_2026-01-29_at_8.35.29_PM.png?v=1769744152';
+        try {
+          const logoPath = await this.downloadImage(logoUrl, 'phoenix-logo.png');
+          if (logoPath && fs.existsSync(logoPath)) {
+            doc.image(logoPath, margin, 35, { width: 150 });
+          } else {
+            // Fallback to text if logo fails
+            doc.font('Helvetica-Bold')
+               .fontSize(24)
+               .fillColor(this.colors.navyBlue)
+               .text('PHOENIX', margin, 40);
+            
+            doc.font('Helvetica')
+               .fontSize(10)
+               .fillColor(this.colors.orange)
+               .text('PHASE CONVERTERS', margin, 65);
+          }
+        } catch (logoErr) {
+          // Fallback to text
+          doc.font('Helvetica-Bold')
+             .fontSize(24)
+             .fillColor(this.colors.navyBlue)
+             .text('PHOENIX', margin, 40);
+          
+          doc.font('Helvetica')
+             .fontSize(10)
+             .fillColor(this.colors.orange)
+             .text('PHASE CONVERTERS', margin, 65);
+        }
         
         // QUOTE Title
         doc.font('Helvetica-Bold')
            .fontSize(36)
            .fillColor(this.colors.navyBlue)
-           .text('QUOTE', margin, 85);
+           .text('QUOTE', margin, 95);
         
         // Quote details - right side
         const rightCol = pageWidth - margin - 180;
         doc.font('Helvetica').fontSize(10).fillColor(this.colors.textDark);
-        doc.text(`Quote #: ${invoice.quoteNumber}`, rightCol, 40);
-        doc.text(`Date: ${invoice.quoteDate}`, rightCol, 55);
-        doc.text(`Valid Until: ${invoice.validUntil}`, rightCol, 70);
+        doc.text(`Quote #: ${invoice.quoteNumber}`, rightCol, 45);
+        doc.text(`Date: ${invoice.quoteDate}`, rightCol, 60);
+        doc.text(`Valid Until: ${invoice.validUntil}`, rightCol, 75);
 
         // ========== BILL TO / COMPANY ==========
         
-        let y = 130;
+        let y = 140;
         
         // Bill To Box
         doc.rect(margin, y, 240, 85).fill(this.colors.lightBlue);
@@ -282,7 +302,7 @@ class InvoiceService {
 
         // ========== PRODUCT TABLE ==========
         
-        y = 230;
+        y = 240;
         
         // Table Header
         doc.rect(margin, y, contentWidth, 22).fill(this.colors.navyBlue);
