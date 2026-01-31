@@ -1,9 +1,8 @@
 /**
  * Invoice Service - Phoenix Phase Converters Style
  * Generates professional invoices matching the PPC quote template
- * FIXED: Single page layout
+ * FIXED: Multiple products, discounts, shipping
  */
-
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
@@ -27,7 +26,9 @@ class InvoiceService {
       textDark: '#1f2937',
       textMuted: '#6b7280',
       white: '#ffffff',
-      borderGray: '#e5e7eb'
+      borderGray: '#e5e7eb',
+      green: '#10b981',
+      red: '#ef4444'
     };
   }
 
@@ -46,7 +47,6 @@ class InvoiceService {
         resolve(null);
         return;
       }
-
       const filepath = path.join(this.assetsDir, filename);
       
       if (fs.existsSync(filepath)) {
@@ -56,7 +56,7 @@ class InvoiceService {
 
       const protocol = url.startsWith('https') ? https : http;
       const file = fs.createWriteStream(filepath);
-
+      
       protocol.get(url, (response) => {
         if (response.statusCode === 301 || response.statusCode === 302) {
           this.downloadImage(response.headers.location, filename)
@@ -64,7 +64,6 @@ class InvoiceService {
             .catch(reject);
           return;
         }
-
         response.pipe(file);
         file.on('finish', () => {
           file.close();
@@ -83,12 +82,30 @@ class InvoiceService {
   }
 
   draftOrderToInvoice(draftOrder) {
-    const taxRate = 0; // No tax on quotes
     const subtotal = parseFloat(draftOrder.subtotal_price) || 0;
-    const shippingCost = parseFloat(draftOrder.total_shipping_price_set?.shop_money?.amount) || 0;
-    const taxAmount = 0; // No tax on quotes
-    const total = subtotal + shippingCost - (parseFloat(draftOrder.total_discounts) || 0);
-
+    
+    // Get shipping from shipping_line (more reliable)
+    let shippingCost = 0;
+    let shippingTitle = 'Shipping';
+    if (draftOrder.shipping_line) {
+      shippingCost = parseFloat(draftOrder.shipping_line.price) || 0;
+      shippingTitle = draftOrder.shipping_line.title || 'Shipping';
+    } else if (draftOrder.total_shipping_price_set?.shop_money?.amount) {
+      shippingCost = parseFloat(draftOrder.total_shipping_price_set.shop_money.amount) || 0;
+    }
+    
+    // Get discount
+    let discountAmount = 0;
+    let discountTitle = 'Discount';
+    if (draftOrder.applied_discount) {
+      discountAmount = parseFloat(draftOrder.applied_discount.amount) || 0;
+      discountTitle = draftOrder.applied_discount.title || draftOrder.applied_discount.description || 'Discount';
+    } else if (draftOrder.total_discounts) {
+      discountAmount = parseFloat(draftOrder.total_discounts) || 0;
+    }
+    
+    const total = parseFloat(draftOrder.total_price) || (subtotal + shippingCost - discountAmount);
+    
     const validUntil = new Date();
     validUntil.setDate(validUntil.getDate() + 30);
 
@@ -100,7 +117,7 @@ class InvoiceService {
       quoteDate: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
       validUntil: validUntil.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
       dueDate: validUntil.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
-
+      
       company: {
         name: 'Phoenix Phase Converters',
         address: '12518 Graceham Road',
@@ -110,7 +127,7 @@ class InvoiceService {
         email: 'support@phoenixphaseconverters.com',
         website: 'www.phoenixphaseconverters.com'
       },
-
+      
       customer: {
         name: draftOrder.customer?.first_name 
           ? `${draftOrder.customer.first_name} ${draftOrder.customer.last_name || ''}`
@@ -123,11 +140,11 @@ class InvoiceService {
         email: draftOrder.customer?.email || draftOrder.email || '',
         phone: draftOrder.customer?.phone || draftOrder.billing_address?.phone || ''
       },
-
+      
       shipping: {
-        name: draftOrder.shipping_address?.name || draftOrder.customer?.first_name 
+        name: draftOrder.shipping_address?.name || (draftOrder.customer?.first_name 
           ? `${draftOrder.customer?.first_name || ''} ${draftOrder.customer?.last_name || ''}`
-          : 'Customer',
+          : 'Customer'),
         company: draftOrder.shipping_address?.company || '',
         address1: draftOrder.shipping_address?.address1 || '',
         city: draftOrder.shipping_address?.city || '',
@@ -135,67 +152,38 @@ class InvoiceService {
         zip: draftOrder.shipping_address?.zip || '',
         phone: draftOrder.shipping_address?.phone || ''
       },
-
+      
       lineItems: (draftOrder.line_items || []).map(item => ({
         id: item.id,
         title: item.title,
         variantTitle: item.variant_title,
+        sku: item.sku || '',
         quantity: item.quantity,
         price: parseFloat(item.price),
         total: parseFloat(item.price) * item.quantity,
         image: item.image?.src || null,
-        productId: item.product_id,
-        features: this.getProductFeatures(item.title)
+        productId: item.product_id
       })),
-
+      
       subtotal,
-      taxRate,
-      taxAmount,
       shippingCost,
-      discount: parseFloat(draftOrder.total_discounts) || 0,
+      shippingTitle,
+      discountAmount,
+      discountTitle,
+      taxAmount: 0,
       total,
       currency: draftOrder.currency || 'USD',
-
+      
       invoiceNotes: [
-        'Free shipping to the contiguous USA',
+        'Free shipping to the contiguous USA on most orders',
         'American-made with LIFETIME WARRANTY',
         '24/7 technical support included'
       ],
-
       personalMessage: {
         from: 'Glen',
         message: 'We appreciate the opportunity to work with you!'
       }
     };
-  }
-
-  getProductFeatures(title) {
-    const titleLower = title.toLowerCase();
-    
-    if (titleLower.includes('fx20') || titleLower.includes('heavy duty digital')) {
-      return [
-        'Powers 20-60 HP machines',
-        '100% cold digital start',
-        'Fully automated digital controls',
-        'Indoor/outdoor enclosure'
-      ];
-    }
-    
-    if (titleLower.includes('rotary') || titleLower.includes('rpc')) {
-      return [
-        'True 3-phase power output',
-        'CNC & compressor compatible',
-        'Heavy-duty construction',
-        'Lifetime warranty'
-      ];
-    }
-    
-    return [
-      'American-made quality',
-      'Professional-grade',
-      'Easy installation',
-      'Lifetime warranty'
-    ];
   }
 
   formatCurrency(amount) {
@@ -223,44 +211,30 @@ class InvoiceService {
       try {
         // ========== HEADER ==========
         
-        // Phoenix Logo Image
+        // Phoenix Logo
         const logoUrl = 'https://cdn.shopify.com/s/files/1/0680/2538/5243/files/Screenshot_2026-01-29_at_8.35.29_PM.png?v=1769744152';
         try {
           const logoPath = await this.downloadImage(logoUrl, 'phoenix-logo.png');
           if (logoPath && fs.existsSync(logoPath)) {
             doc.image(logoPath, margin, 35, { width: 150 });
           } else {
-            // Fallback to text if logo fails
-            doc.font('Helvetica-Bold')
-               .fontSize(24)
-               .fillColor(this.colors.navyBlue)
+            doc.font('Helvetica-Bold').fontSize(24).fillColor(this.colors.navyBlue)
                .text('PHOENIX', margin, 40);
-            
-            doc.font('Helvetica')
-               .fontSize(10)
-               .fillColor(this.colors.orange)
+            doc.font('Helvetica').fontSize(10).fillColor(this.colors.orange)
                .text('PHASE CONVERTERS', margin, 65);
           }
         } catch (logoErr) {
-          // Fallback to text
-          doc.font('Helvetica-Bold')
-             .fontSize(24)
-             .fillColor(this.colors.navyBlue)
+          doc.font('Helvetica-Bold').fontSize(24).fillColor(this.colors.navyBlue)
              .text('PHOENIX', margin, 40);
-          
-          doc.font('Helvetica')
-             .fontSize(10)
-             .fillColor(this.colors.orange)
+          doc.font('Helvetica').fontSize(10).fillColor(this.colors.orange)
              .text('PHASE CONVERTERS', margin, 65);
         }
         
         // QUOTE Title
-        doc.font('Helvetica-Bold')
-           .fontSize(36)
-           .fillColor(this.colors.navyBlue)
+        doc.font('Helvetica-Bold').fontSize(36).fillColor(this.colors.navyBlue)
            .text('QUOTE', margin, 95);
         
-        // Contact info under logo
+        // Contact info
         doc.font('Helvetica').fontSize(9).fillColor(this.colors.navyBlue);
         doc.text(invoice.company.phone, margin, 130);
         doc.text(invoice.company.email, margin + 100, 130);
@@ -276,7 +250,7 @@ class InvoiceService {
         
         let y = 150;
         
-        // Bill To Box (left side)
+        // Bill To Box
         doc.rect(margin, y, 250, 85).fill(this.colors.lightBlue);
         doc.font('Helvetica-Bold').fontSize(10).fillColor(this.colors.navyBlue)
            .text('Bill To:', margin + 10, y + 8);
@@ -302,7 +276,7 @@ class InvoiceService {
           doc.text(invoice.customer.email, margin + 10, billY, { width: 230 });
         }
         
-        // Ship To Box (right side)
+        // Ship To Box
         const shipX = margin + 270;
         doc.rect(shipX, y, 250, 85).fill(this.colors.lightBlue);
         doc.font('Helvetica-Bold').fontSize(10).fillColor(this.colors.navyBlue)
@@ -337,95 +311,92 @@ class InvoiceService {
         doc.rect(margin, y, contentWidth, 22).fill(this.colors.navyBlue);
         doc.font('Helvetica-Bold').fontSize(9).fillColor(this.colors.white);
         doc.text('Product', margin + 10, y + 7);
-        doc.text('QTY', margin + 340, y + 7, { width: 40, align: 'center' });
-        doc.text('PRICE', margin + 390, y + 7, { width: 60, align: 'center' });
-        doc.text('TOTAL', margin + 460, y + 7, { width: 60, align: 'right' });
+        doc.text('QTY', margin + 320, y + 7, { width: 50, align: 'center' });
+        doc.text('PRICE', margin + 380, y + 7, { width: 60, align: 'center' });
+        doc.text('TOTAL', margin + 450, y + 7, { width: 70, align: 'right' });
         
         y += 22;
         
-        // Product Row (first item only for single page)
-        const item = invoice.lineItems[0];
-        if (item) {
-          // Try to download and display product image
-          let productImagePath = null;
-          if (item.image) {
-            try {
-              const imageFilename = `product_${item.id}.jpg`;
-              productImagePath = await this.downloadImage(item.image, imageFilename);
-            } catch (imgErr) {
-              console.log('Could not download product image:', imgErr.message);
-            }
+        // ===== ALL LINE ITEMS =====
+        for (let i = 0; i < invoice.lineItems.length; i++) {
+          const item = invoice.lineItems[i];
+          
+          // Alternate row background
+          if (i % 2 === 1) {
+            doc.rect(margin, y, contentWidth, 40).fill('#f8fafc');
           }
           
-          // Product name (narrower if we have an image)
-          const titleWidth = productImagePath ? 220 : 300;
-          doc.font('Helvetica-Bold').fontSize(10).fillColor(this.colors.textDark)
-             .text(item.title, margin + 10, y + 8, { width: titleWidth });
+          // Product name
+          doc.font('Helvetica-Bold').fontSize(9).fillColor(this.colors.textDark)
+             .text(item.title, margin + 10, y + 5, { width: 290 });
+          
+          // SKU if available
+          if (item.sku) {
+            doc.font('Helvetica').fontSize(8).fillColor(this.colors.textMuted)
+               .text(item.sku, margin + 10, y + 18, { width: 290 });
+          }
           
           // Qty, Price, Total
-          doc.font('Helvetica').fontSize(10)
-             .text(item.quantity.toString(), margin + 340, y + 8, { width: 40, align: 'center' })
-             .text(this.formatCurrency(item.price), margin + 390, y + 8, { width: 60, align: 'center' })
-             .text(this.formatCurrency(item.total), margin + 460, y + 8, { width: 60, align: 'right' });
+          doc.font('Helvetica').fontSize(10).fillColor(this.colors.textDark)
+             .text(item.quantity.toString(), margin + 320, y + 12, { width: 50, align: 'center' })
+             .text(this.formatCurrency(item.price), margin + 380, y + 12, { width: 60, align: 'center' })
+             .text(this.formatCurrency(item.total), margin + 450, y + 12, { width: 70, align: 'right' });
           
-          // Features
-          const featuresStartY = y + 30;
-          y += 30;
-          doc.font('Helvetica').fontSize(8).fillColor(this.colors.textMuted);
-          for (const feature of item.features.slice(0, 4)) {
-            doc.text('• ' + feature, margin + 10, y, { width: titleWidth });
-            y += 11;
-          }
+          y += 40;
           
-          // Product image on the right side of product info
-          if (productImagePath && fs.existsSync(productImagePath)) {
-            try {
-              doc.image(productImagePath, margin + 240, featuresStartY - 22, { 
-                width: 80,
-                height: 80,
-                fit: [80, 80]
-              });
-            } catch (imgErr) {
-              console.log('Could not embed product image:', imgErr.message);
-            }
+          // Check if we need a new page
+          if (y > 600) {
+            doc.addPage();
+            y = 50;
           }
         }
         
-        // Line under product
-        y += 10;
+        // Line under products
         doc.moveTo(margin, y).lineTo(margin + contentWidth, y)
            .strokeColor(this.colors.borderGray).lineWidth(1).stroke();
 
         // ========== TOTALS ==========
         
         y += 15;
-        const totalsX = margin + 320;
+        const totalsX = margin + 300;
+        const totalsValueX = margin + 450;
         
         // Subtotal
         doc.font('Helvetica').fontSize(10).fillColor(this.colors.textDark);
-        doc.text('Subtotal:', totalsX, y);
-        doc.text(this.formatCurrency(invoice.subtotal), totalsX + 120, y, { width: 80, align: 'right' });
+        doc.text('Subtotal:', totalsX, y, { width: 100 });
+        doc.text(this.formatCurrency(invoice.subtotal), totalsValueX, y, { width: 70, align: 'right' });
         
-        y += 18;
-        doc.text('Shipping:', totalsX, y);
-        doc.text(invoice.shippingCost > 0 ? this.formatCurrency(invoice.shippingCost) : 'Free', totalsX + 120, y, { width: 80, align: 'right' });
-        
-        // Only show tax if there is any
-        if (invoice.taxAmount > 0) {
+        // Discount (if any)
+        if (invoice.discountAmount > 0) {
           y += 18;
-          const taxPercent = Math.round(invoice.taxRate * 100);
-          doc.text(`Tax (${taxPercent}%):`, totalsX, y);
-          doc.text(this.formatCurrency(invoice.taxAmount), totalsX + 120, y, { width: 80, align: 'right' });
+          doc.font('Helvetica').fontSize(10).fillColor(this.colors.green);
+          doc.text(invoice.discountTitle + ':', totalsX, y, { width: 140 });
+          doc.text('-' + this.formatCurrency(invoice.discountAmount), totalsValueX, y, { width: 70, align: 'right' });
         }
         
-        y += 22;
+        // Shipping
+        y += 18;
+        doc.font('Helvetica').fontSize(10).fillColor(this.colors.textDark);
+        const shippingLabel = invoice.shippingTitle || 'Shipping';
+        doc.text(shippingLabel + ':', totalsX, y, { width: 140 });
+        doc.text(invoice.shippingCost > 0 ? this.formatCurrency(invoice.shippingCost) : 'Free', totalsValueX, y, { width: 70, align: 'right' });
+        
+        // Tax (if any)
+        if (invoice.taxAmount > 0) {
+          y += 18;
+          doc.text('Tax:', totalsX, y, { width: 100 });
+          doc.text(this.formatCurrency(invoice.taxAmount), totalsValueX, y, { width: 70, align: 'right' });
+        }
+        
+        // Total
+        y += 25;
         doc.font('Helvetica-Bold').fontSize(14).fillColor(this.colors.navyBlue);
         doc.text('Total:', totalsX, y);
-        doc.text(this.formatCurrency(invoice.total), totalsX + 100, y, { width: 100, align: 'right' });
+        doc.text(this.formatCurrency(invoice.total), totalsValueX - 20, y, { width: 90, align: 'right' });
 
         // ========== NOTES SECTION ==========
         
-        y += 40;
+        y += 45;
         
         // Notes box
         doc.rect(margin, y, 280, 18).fill(this.colors.navyBlue);
@@ -447,11 +418,10 @@ class InvoiceService {
         doc.font('Helvetica').fontSize(9)
            .text(invoice.personalMessage.message, margin + 10, y, { width: 260 });
 
-        // QR Code (right side) - link to payment page
+        // QR Code
         const qrX = margin + 400;
         const qrY = y - 70;
         
-        // Generate QR code linking to payment/checkout page
         const paymentUrl = `https://phoenixphaseconverters.com/checkout?quote=${invoice.quoteNumber}`;
         try {
           const qrDataUrl = await QRCode.toDataURL(paymentUrl, {
@@ -462,7 +432,6 @@ class InvoiceService {
           const qrBuffer = Buffer.from(qrDataUrl.split(',')[1], 'base64');
           doc.image(qrBuffer, qrX, qrY, { width: 70, height: 70 });
         } catch (qrErr) {
-          // Fallback: draw empty box if QR fails
           doc.rect(qrX, qrY, 70, 70).lineWidth(1).strokeColor(this.colors.navyBlue).stroke();
         }
         doc.font('Helvetica-Bold').fontSize(8).fillColor(this.colors.navyBlue)
@@ -471,13 +440,15 @@ class InvoiceService {
         // ========== PAYMENT METHODS BAR ==========
         
         y += 50;
-        doc.rect(margin, y, contentWidth, 25).fill('#f1f5f9');
-        doc.font('Helvetica-Bold').fontSize(9);
-        doc.fillColor('#003087').text('PayPal', margin + 15, y + 8);
-        doc.fillColor('#1a1f71').text('VISA', margin + 70, y + 8);
-        doc.fillColor(this.colors.textDark).text('MC', margin + 110, y + 8);
-        doc.fillColor(this.colors.textDark).text('Bank', margin + 150, y + 8);
-        doc.fillColor('#ff6000').text('DISCOVER', margin + 200, y + 8);
+        if (y < 700) { // Make sure we have room
+          doc.rect(margin, y, contentWidth, 25).fill('#f1f5f9');
+          doc.font('Helvetica-Bold').fontSize(9);
+          doc.fillColor('#003087').text('PayPal', margin + 15, y + 8);
+          doc.fillColor('#1a1f71').text('VISA', margin + 70, y + 8);
+          doc.fillColor(this.colors.textDark).text('MC', margin + 110, y + 8);
+          doc.fillColor(this.colors.textDark).text('Bank', margin + 150, y + 8);
+          doc.fillColor('#ff6000').text('DISCOVER', margin + 200, y + 8);
+        }
 
         // ========== FOOTER ==========
         
