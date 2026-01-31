@@ -87,12 +87,13 @@ class ShopifyService {
   }
 
   /**
-   * Get all draft orders (quotes)
+   * Get all draft orders (quotes) - sorted newest first
    */
   async getDraftOrders(params = {}) {
     console.log('[Shopify] Fetching draft orders...', params);
     const queryParams = new URLSearchParams({
       limit: params.limit || 250,
+      order: 'created_at desc',
       ...(params.status && params.status !== 'any' && { status: params.status })
     }).toString();
     
