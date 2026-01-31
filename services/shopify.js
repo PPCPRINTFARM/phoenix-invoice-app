@@ -1,7 +1,6 @@
 /**
  * Shopify API Service - Phoenix Invoice App
- * Uses Client Credentials Grant for Admin API access
- * Tokens expire every 24 hours and are refreshed automatically
+ * Uses static Admin API Access Token (shpat_)
  */
 
 const axios = require('axios');
@@ -9,69 +8,20 @@ const axios = require('axios');
 class ShopifyService {
   constructor() {
     this.storeUrl = process.env.SHOPIFY_STORE_URL;
-    this.clientId = process.env.SHOPIFY_API_KEY;      // Also known as Client ID
-    this.clientSecret = process.env.SHOPIFY_API_SECRET; // Also known as Client Secret
-    this.apiVersion = '2026-01';
-    
-    // Token management
-    this.accessToken = null;
-    this.tokenExpiry = null;
+    this.accessToken = process.env.SHOPIFY_ACCESS_TOKEN; // Static shpat_ token
+    this.apiVersion = '2024-01';
     
     // Base URL for API requests
     this.baseUrl = `https://${this.storeUrl}/admin/api/${this.apiVersion}`;
   }
 
   /**
-   * Get a valid access token, refreshing if necessary
+   * Get headers with access token
    */
-  async getAccessToken() {
-    // Check if we have a valid token (with 5 minute buffer)
-    const bufferMs = 5 * 60 * 1000; // 5 minutes
-    if (this.accessToken && this.tokenExpiry && Date.now() < (this.tokenExpiry - bufferMs)) {
-      return this.accessToken;
-    }
-
-    // Need to fetch a new token
-    console.log('[Shopify] Fetching new access token via client credentials...');
-    
-    try {
-      const response = await axios.post(
-        `https://${this.storeUrl}/admin/oauth/access_token`,
-        new URLSearchParams({
-          grant_type: 'client_credentials',
-          client_id: this.clientId,
-          client_secret: this.clientSecret
-        }).toString(),
-        {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-          }
-        }
-      );
-
-      this.accessToken = response.data.access_token;
-      // Token expires in 24 hours (86399 seconds)
-      this.tokenExpiry = Date.now() + (response.data.expires_in * 1000);
-      
-      console.log('[Shopify] Access token acquired successfully');
-      console.log(`[Shopify] Token expires in ${Math.round(response.data.expires_in / 3600)} hours`);
-      console.log(`[Shopify] Scopes: ${response.data.scope}`);
-      
-      return this.accessToken;
-    } catch (error) {
-      console.error('[Shopify] Failed to get access token:', error.response?.data || error.message);
-      throw new Error(`Failed to authenticate with Shopify: ${error.response?.data?.error_description || error.message}`);
-    }
-  }
-
-  /**
-   * Get headers with current access token
-   */
-  async getHeaders() {
-    const token = await this.getAccessToken();
+  getHeaders() {
     return {
       'Content-Type': 'application/json',
-      'X-Shopify-Access-Token': token
+      'X-Shopify-Access-Token': this.accessToken
     };
   }
 
@@ -80,7 +30,7 @@ class ShopifyService {
    */
   async request(method, endpoint, data = null) {
     try {
-      const headers = await this.getHeaders();
+      const headers = this.getHeaders();
       
       const config = {
         method,
@@ -92,24 +42,6 @@ class ShopifyService {
       const response = await axios(config);
       return response.data;
     } catch (error) {
-      // If we get a 401, try refreshing the token once
-      if (error.response?.status === 401) {
-        console.log('[Shopify] Got 401, forcing token refresh...');
-        this.accessToken = null;
-        this.tokenExpiry = null;
-        
-        const headers = await this.getHeaders();
-        const config = {
-          method,
-          url: `${this.baseUrl}${endpoint}`,
-          headers,
-          ...(data && { data })
-        };
-        
-        const response = await axios(config);
-        return response.data;
-      }
-      
       console.error(`[Shopify] API Error [${endpoint}]:`, error.response?.data || error.message);
       throw new Error(error.response?.data?.errors || error.message);
     }
@@ -120,7 +52,7 @@ class ShopifyService {
    */
   async graphql(query, variables = {}) {
     try {
-      const headers = await this.getHeaders();
+      const headers = this.getHeaders();
       
       const response = await axios.post(
         `${this.baseUrl}/graphql.json`,
@@ -135,22 +67,6 @@ class ShopifyService {
       
       return response.data.data;
     } catch (error) {
-      // If we get a 401, try refreshing the token once
-      if (error.response?.status === 401) {
-        console.log('[Shopify] Got 401 on GraphQL, forcing token refresh...');
-        this.accessToken = null;
-        this.tokenExpiry = null;
-        
-        const headers = await this.getHeaders();
-        const response = await axios.post(
-          `${this.baseUrl}/graphql.json`,
-          { query, variables },
-          { headers }
-        );
-        
-        return response.data.data;
-      }
-      
       console.error('[Shopify] GraphQL Error:', error.response?.data || error.message);
       throw error;
     }
@@ -160,9 +76,6 @@ class ShopifyService {
   // DRAFT ORDERS (QUOTES)
   // ==========================================
 
-  /**
-   * Get all draft orders (quotes)
-   */
   async getDraftOrders(params = {}) {
     const queryParams = new URLSearchParams({
       limit: params.limit || 50,
@@ -173,30 +86,18 @@ class ShopifyService {
     return this.request('GET', `/draft_orders.json?${queryParams}`);
   }
 
-  /**
-   * Get single draft order by ID
-   */
   async getDraftOrder(id) {
     return this.request('GET', `/draft_orders/${id}.json`);
   }
 
-  /**
-   * Update a draft order
-   */
   async updateDraftOrder(id, data) {
     return this.request('PUT', `/draft_orders/${id}.json`, { draft_order: data });
   }
 
-  /**
-   * Complete/convert draft order to real order
-   */
   async completeDraftOrder(id, paymentPending = true) {
     return this.request('PUT', `/draft_orders/${id}/complete.json?payment_pending=${paymentPending}`);
   }
 
-  /**
-   * Send invoice for draft order via Shopify
-   */
   async sendDraftOrderInvoice(id, invoiceData = {}) {
     const data = {
       draft_order_invoice: {
@@ -209,9 +110,6 @@ class ShopifyService {
     return this.request('POST', `/draft_orders/${id}/send_invoice.json`, data);
   }
 
-  /**
-   * Delete a draft order
-   */
   async deleteDraftOrder(id) {
     return this.request('DELETE', `/draft_orders/${id}.json`);
   }
@@ -220,9 +118,6 @@ class ShopifyService {
   // ORDERS
   // ==========================================
 
-  /**
-   * Get orders
-   */
   async getOrders(params = {}) {
     const queryParams = new URLSearchParams({
       limit: params.limit || 50,
@@ -233,9 +128,6 @@ class ShopifyService {
     return this.request('GET', `/orders.json?${queryParams}`);
   }
 
-  /**
-   * Get single order
-   */
   async getOrder(id) {
     return this.request('GET', `/orders/${id}.json`);
   }
@@ -244,9 +136,6 @@ class ShopifyService {
   // PRODUCTS
   // ==========================================
 
-  /**
-   * Get products
-   */
   async getProducts(params = {}) {
     const queryParams = new URLSearchParams({
       limit: params.limit || 50,
@@ -256,9 +145,6 @@ class ShopifyService {
     return this.request('GET', `/products.json?${queryParams}`);
   }
 
-  /**
-   * Get single product
-   */
   async getProduct(id) {
     return this.request('GET', `/products/${id}.json`);
   }
@@ -267,9 +153,6 @@ class ShopifyService {
   // CUSTOMERS
   // ==========================================
 
-  /**
-   * Get customers
-   */
   async getCustomers(params = {}) {
     const queryParams = new URLSearchParams({
       limit: params.limit || 50,
@@ -279,9 +162,6 @@ class ShopifyService {
     return this.request('GET', `/customers.json?${queryParams}`);
   }
 
-  /**
-   * Search customers by email or phone
-   */
   async searchCustomers(query) {
     return this.request('GET', `/customers/search.json?query=${encodeURIComponent(query)}`);
   }
@@ -290,16 +170,10 @@ class ShopifyService {
   // WEBHOOKS
   // ==========================================
 
-  /**
-   * Get registered webhooks
-   */
   async getWebhooks() {
     return this.request('GET', '/webhooks.json');
   }
 
-  /**
-   * Register a webhook
-   */
   async createWebhook(topic, address) {
     return this.request('POST', '/webhooks.json', {
       webhook: {
@@ -310,9 +184,6 @@ class ShopifyService {
     });
   }
 
-  /**
-   * Delete a webhook
-   */
   async deleteWebhook(id) {
     return this.request('DELETE', `/webhooks/${id}.json`);
   }
@@ -321,16 +192,10 @@ class ShopifyService {
   // SHOP INFO
   // ==========================================
 
-  /**
-   * Get shop information
-   */
   async getShop() {
     return this.request('GET', '/shop.json');
   }
 
-  /**
-   * Test API connection
-   */
   async testConnection() {
     try {
       const shop = await this.getShop();
@@ -348,9 +213,6 @@ class ShopifyService {
     }
   }
 
-  /**
-   * Register webhooks for the app
-   */
   async registerWebhooks() {
     const appUrl = process.env.APP_URL || 'https://phoenix-invoice-app.onrender.com';
     
@@ -364,7 +226,6 @@ class ShopifyService {
     console.log('[Shopify] Registering webhooks...');
     
     try {
-      // Get existing webhooks
       const existing = await this.getWebhooks();
       const existingTopics = existing.webhooks?.map(w => w.topic) || [];
       
@@ -388,5 +249,4 @@ class ShopifyService {
   }
 }
 
-// Export singleton instance
 module.exports = new ShopifyService();
