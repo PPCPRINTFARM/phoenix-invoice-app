@@ -1,16 +1,77 @@
 /**
- * Shopify API Service
- * Handles all Shopify API interactions including draft orders, orders, and webhooks
+ * Shopify API Service - Phoenix Invoice App
+ * Uses Client Credentials Grant for Admin API access
+ * Tokens expire every 24 hours and are refreshed automatically
  */
 
 const axios = require('axios');
 
 class ShopifyService {
   constructor() {
-    this.baseUrl = `https://${process.env.SHOPIFY_STORE_URL}/admin/api/2024-01`;
-    this.headers = {
-      'X-Shopify-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN,
-      'Content-Type': 'application/json'
+    this.storeUrl = process.env.SHOPIFY_STORE_URL;
+    this.clientId = process.env.SHOPIFY_CLIENT_ID;
+    this.clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
+    this.apiVersion = '2026-01';
+    
+    // Token management
+    this.accessToken = null;
+    this.tokenExpiry = null;
+    
+    // Base URL for API requests
+    this.baseUrl = `https://${this.storeUrl}/admin/api/${this.apiVersion}`;
+  }
+
+  /**
+   * Get a valid access token, refreshing if necessary
+   */
+  async getAccessToken() {
+    // Check if we have a valid token (with 5 minute buffer)
+    const bufferMs = 5 * 60 * 1000; // 5 minutes
+    if (this.accessToken && this.tokenExpiry && Date.now() < (this.tokenExpiry - bufferMs)) {
+      return this.accessToken;
+    }
+
+    // Need to fetch a new token
+    console.log('[Shopify] Fetching new access token via client credentials...');
+    
+    try {
+      const response = await axios.post(
+        `https://${this.storeUrl}/admin/oauth/access_token`,
+        new URLSearchParams({
+          grant_type: 'client_credentials',
+          client_id: this.clientId,
+          client_secret: this.clientSecret
+        }).toString(),
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded'
+          }
+        }
+      );
+
+      this.accessToken = response.data.access_token;
+      // Token expires in 24 hours (86399 seconds)
+      this.tokenExpiry = Date.now() + (response.data.expires_in * 1000);
+      
+      console.log('[Shopify] Access token acquired successfully');
+      console.log(`[Shopify] Token expires in ${Math.round(response.data.expires_in / 3600)} hours`);
+      console.log(`[Shopify] Scopes: ${response.data.scope}`);
+      
+      return this.accessToken;
+    } catch (error) {
+      console.error('[Shopify] Failed to get access token:', error.response?.data || error.message);
+      throw new Error(`Failed to authenticate with Shopify: ${error.response?.data?.error_description || error.message}`);
+    }
+  }
+
+  /**
+   * Get headers with current access token
+   */
+  async getHeaders() {
+    const token = await this.getAccessToken();
+    return {
+      'Content-Type': 'application/json',
+      'X-Shopify-Access-Token': token
     };
   }
 
@@ -19,34 +80,94 @@ class ShopifyService {
    */
   async request(method, endpoint, data = null) {
     try {
+      const headers = await this.getHeaders();
+      
       const config = {
         method,
         url: `${this.baseUrl}${endpoint}`,
-        headers: this.headers,
+        headers,
         ...(data && { data })
       };
       
       const response = await axios(config);
       return response.data;
     } catch (error) {
-      console.error(`Shopify API Error [${endpoint}]:`, error.response?.data || error.message);
+      // If we get a 401, try refreshing the token once
+      if (error.response?.status === 401) {
+        console.log('[Shopify] Got 401, forcing token refresh...');
+        this.accessToken = null;
+        this.tokenExpiry = null;
+        
+        const headers = await this.getHeaders();
+        const config = {
+          method,
+          url: `${this.baseUrl}${endpoint}`,
+          headers,
+          ...(data && { data })
+        };
+        
+        const response = await axios(config);
+        return response.data;
+      }
+      
+      console.error(`[Shopify] API Error [${endpoint}]:`, error.response?.data || error.message);
       throw new Error(error.response?.data?.errors || error.message);
     }
   }
 
   /**
+   * Make GraphQL request to Shopify Admin API
+   */
+  async graphql(query, variables = {}) {
+    try {
+      const headers = await this.getHeaders();
+      
+      const response = await axios.post(
+        `${this.baseUrl}/graphql.json`,
+        { query, variables },
+        { headers }
+      );
+      
+      if (response.data.errors) {
+        console.error('[Shopify] GraphQL Errors:', response.data.errors);
+        throw new Error(response.data.errors[0]?.message || 'GraphQL error');
+      }
+      
+      return response.data.data;
+    } catch (error) {
+      // If we get a 401, try refreshing the token once
+      if (error.response?.status === 401) {
+        console.log('[Shopify] Got 401 on GraphQL, forcing token refresh...');
+        this.accessToken = null;
+        this.tokenExpiry = null;
+        
+        const headers = await this.getHeaders();
+        const response = await axios.post(
+          `${this.baseUrl}/graphql.json`,
+          { query, variables },
+          { headers }
+        );
+        
+        return response.data.data;
+      }
+      
+      console.error('[Shopify] GraphQL Error:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  // ==========================================
+  // DRAFT ORDERS (QUOTES)
+  // ==========================================
+
+  /**
    * Get all draft orders (quotes)
    */
   async getDraftOrders(params = {}) {
-    // Get drafts created in last 30 days to show most recent
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const createdAtMin = thirtyDaysAgo.toISOString();
-    
     const queryParams = new URLSearchParams({
-      limit: params.limit || 250,
-      created_at_min: createdAtMin,
-      ...(params.status && params.status !== 'any' && { status: params.status })
+      limit: params.limit || 50,
+      status: params.status || 'open',
+      ...params
     }).toString();
     
     return this.request('GET', `/draft_orders.json?${queryParams}`);
@@ -67,21 +188,14 @@ class ShopifyService {
   }
 
   /**
-   * Create a new draft order
-   */
-  async createDraftOrder(data) {
-    return this.request('POST', '/draft_orders.json', { draft_order: data });
-  }
-
-  /**
-   * Complete/convert draft order to real order (creates invoice)
+   * Complete/convert draft order to real order
    */
   async completeDraftOrder(id, paymentPending = true) {
     return this.request('PUT', `/draft_orders/${id}/complete.json?payment_pending=${paymentPending}`);
   }
 
   /**
-   * Send invoice for draft order
+   * Send invoice for draft order via Shopify
    */
   async sendDraftOrderInvoice(id, invoiceData = {}) {
     const data = {
@@ -89,16 +203,25 @@ class ShopifyService {
         to: invoiceData.to || null,
         from: invoiceData.from || process.env.COMPANY_EMAIL,
         subject: invoiceData.subject || `Invoice from ${process.env.COMPANY_NAME}`,
-        custom_message: invoiceData.message || 'Thank you for your order. Please find your invoice attached.',
-        bcc: invoiceData.bcc || []
+        custom_message: invoiceData.message || 'Thank you for your order. Please find your invoice attached.'
       }
     };
-    
     return this.request('POST', `/draft_orders/${id}/send_invoice.json`, data);
   }
 
   /**
-   * Get all orders
+   * Delete a draft order
+   */
+  async deleteDraftOrder(id) {
+    return this.request('DELETE', `/draft_orders/${id}.json`);
+  }
+
+  // ==========================================
+  // ORDERS
+  // ==========================================
+
+  /**
+   * Get orders
    */
   async getOrders(params = {}) {
     const queryParams = new URLSearchParams({
@@ -117,126 +240,74 @@ class ShopifyService {
     return this.request('GET', `/orders/${id}.json`);
   }
 
-  /**
-   * Get customer by ID
-   */
-  async getCustomer(id) {
-    return this.request('GET', `/customers/${id}.json`);
-  }
-
-  /**
-   * Search customers
-   */
-  async searchCustomers(query) {
-    return this.request('GET', `/customers/search.json?query=${encodeURIComponent(query)}`);
-  }
+  // ==========================================
+  // PRODUCTS
+  // ==========================================
 
   /**
    * Get products
    */
   async getProducts(params = {}) {
     const queryParams = new URLSearchParams({
-      limit: params.limit || 250,
-      status: 'active'
+      limit: params.limit || 50,
+      ...params
     }).toString();
     
     return this.request('GET', `/products.json?${queryParams}`);
   }
 
   /**
-   * Search products by title (fetches all and filters)
-   */
-  async searchProducts(query, limit = 20) {
-    // Shopify REST API doesn't have good title search, so fetch and filter
-    const result = await this.request('GET', `/products.json?limit=250&status=active`);
-    
-    if (!result.products) return { products: [] };
-    
-    const searchLower = query.toLowerCase();
-    const filtered = result.products.filter(p => 
-      p.title.toLowerCase().includes(searchLower) ||
-      (p.variants && p.variants.some(v => 
-        (v.sku && v.sku.toLowerCase().includes(searchLower)) ||
-        (v.title && v.title.toLowerCase().includes(searchLower))
-      ))
-    ).slice(0, limit);
-    
-    return { products: filtered };
-  }
-
-  /**
-   * Get single product by ID
+   * Get single product
    */
   async getProduct(id) {
     return this.request('GET', `/products/${id}.json`);
   }
 
+  // ==========================================
+  // CUSTOMERS
+  // ==========================================
+
   /**
-   * Create metafield for order (store invoice data)
+   * Get customers
    */
-  async createOrderMetafield(orderId, data) {
-    return this.request('POST', `/orders/${orderId}/metafields.json`, {
-      metafield: {
-        namespace: 'phoenix_invoices',
-        key: 'invoice_data',
-        value: JSON.stringify(data),
-        type: 'json'
-      }
-    });
+  async getCustomers(params = {}) {
+    const queryParams = new URLSearchParams({
+      limit: params.limit || 50,
+      ...params
+    }).toString();
+    
+    return this.request('GET', `/customers.json?${queryParams}`);
   }
 
   /**
-   * Register webhooks
+   * Search customers by email or phone
    */
-  async registerWebhooks() {
-    const webhookTopics = [
-      'draft_orders/create',
-      'draft_orders/update',
-      'draft_orders/delete',
-      'orders/create',
-      'orders/paid',
-      'orders/fulfilled'
-    ];
-
-    const appUrl = process.env.APP_URL;
-    const results = [];
-
-    // First, get existing webhooks
-    const existingWebhooks = await this.getWebhooks();
-    const existingTopics = existingWebhooks.webhooks?.map(w => w.topic) || [];
-
-    for (const topic of webhookTopics) {
-      // Skip if already registered
-      if (existingTopics.includes(topic)) {
-        console.log(`Webhook already registered: ${topic}`);
-        results.push({ topic, status: 'exists' });
-        continue;
-      }
-
-      try {
-        const result = await this.request('POST', '/webhooks.json', {
-          webhook: {
-            topic,
-            address: `${appUrl}/webhooks/${topic.replace('/', '-')}`,
-            format: 'json'
-          }
-        });
-        console.log(`Webhook registered: ${topic}`);
-        results.push({ topic, status: 'created', id: result.webhook?.id });
-      } catch (error) {
-        console.error(`Failed to register webhook ${topic}:`, error.message);
-        results.push({ topic, status: 'error', error: error.message });
-      }
-    }
-
-    return results;
+  async searchCustomers(query) {
+    return this.request('GET', `/customers/search.json?query=${encodeURIComponent(query)}`);
   }
 
+  // ==========================================
+  // WEBHOOKS
+  // ==========================================
+
   /**
-   * Get all registered webhooks
+   * Get registered webhooks
    */
   async getWebhooks() {
     return this.request('GET', '/webhooks.json');
+  }
+
+  /**
+   * Register a webhook
+   */
+  async createWebhook(topic, address) {
+    return this.request('POST', '/webhooks.json', {
+      webhook: {
+        topic,
+        address,
+        format: 'json'
+      }
+    });
   }
 
   /**
@@ -246,23 +317,37 @@ class ShopifyService {
     return this.request('DELETE', `/webhooks/${id}.json`);
   }
 
+  // ==========================================
+  // SHOP INFO
+  // ==========================================
+
   /**
-   * Verify webhook signature
+   * Get shop information
    */
-  verifyWebhookSignature(body, hmacHeader) {
-    const crypto = require('crypto');
-    const secret = process.env.SHOPIFY_WEBHOOK_SECRET || process.env.SHOPIFY_API_SECRET;
-    
-    const hash = crypto
-      .createHmac('sha256', secret)
-      .update(body, 'utf8')
-      .digest('base64');
-    
-    return crypto.timingSafeEqual(
-      Buffer.from(hash),
-      Buffer.from(hmacHeader || '')
-    );
+  async getShop() {
+    return this.request('GET', '/shop.json');
+  }
+
+  /**
+   * Test API connection
+   */
+  async testConnection() {
+    try {
+      const shop = await this.getShop();
+      return {
+        success: true,
+        shop: shop.shop.name,
+        email: shop.shop.email,
+        domain: shop.shop.domain
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
   }
 }
 
+// Export singleton instance
 module.exports = new ShopifyService();
