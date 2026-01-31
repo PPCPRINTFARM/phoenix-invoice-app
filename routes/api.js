@@ -44,9 +44,16 @@ router.get('/draft-orders', async (req, res, next) => {
  */
 router.post('/draft-orders', async (req, res, next) => {
   try {
-    const { customer, line_items, note, email } = req.body;
+    console.log('[API] Received create draft order request:', JSON.stringify(req.body, null, 2));
     
-    if (!line_items || !line_items.length) {
+    // Accept both line_items and lineItems and products
+    const lineItems = req.body.line_items || req.body.lineItems || req.body.products || [];
+    const customer = req.body.customer;
+    const email = req.body.email;
+    const note = req.body.note || req.body.notes;
+    const shippingAddress = req.body.shipping_address || req.body.shippingAddress;
+    
+    if (!lineItems || !lineItems.length) {
       return res.status(400).json({
         success: false,
         error: 'At least one line item is required'
@@ -54,18 +61,51 @@ router.post('/draft-orders', async (req, res, next) => {
     }
     
     const draftOrderData = {
-      line_items: line_items.map(item => ({
-        variant_id: item.variant_id,
-        product_id: item.product_id,
-        title: item.title,
+      line_items: lineItems.map(item => ({
+        variant_id: item.variant_id || item.variantId,
+        product_id: item.product_id || item.productId,
+        title: item.title || item.name,
         quantity: item.quantity || 1,
         price: item.price
       })),
-      ...(customer && { customer: { id: customer.id } }),
-      ...(email && { email }),
-      ...(note && { note }),
-      use_customer_default_address: true
+      use_customer_default_address: false
     };
+    
+    // Add customer if provided
+    if (customer && customer.id) {
+      draftOrderData.customer = { id: customer.id };
+    } else if (email) {
+      // Create customer info from form data
+      draftOrderData.email = email;
+      if (customer) {
+        draftOrderData.customer = {
+          first_name: customer.first_name || customer.firstName,
+          last_name: customer.last_name || customer.lastName,
+          email: email,
+          phone: customer.phone
+        };
+      }
+    }
+    
+    // Add shipping address if provided
+    if (shippingAddress) {
+      draftOrderData.shipping_address = {
+        first_name: shippingAddress.first_name || shippingAddress.firstName || customer?.first_name || customer?.firstName,
+        last_name: shippingAddress.last_name || shippingAddress.lastName || customer?.last_name || customer?.lastName,
+        address1: shippingAddress.address1 || shippingAddress.line1,
+        address2: shippingAddress.address2 || shippingAddress.line2 || '',
+        city: shippingAddress.city,
+        province: shippingAddress.province || shippingAddress.state,
+        zip: shippingAddress.zip || shippingAddress.zipCode,
+        country: shippingAddress.country || 'US',
+        phone: shippingAddress.phone || customer?.phone
+      };
+    }
+    
+    // Add note if provided
+    if (note) {
+      draftOrderData.note = note;
+    }
     
     console.log('[API] Creating draft order:', JSON.stringify(draftOrderData, null, 2));
     
