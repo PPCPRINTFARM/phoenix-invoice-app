@@ -98,34 +98,11 @@ class ShopifyService {
     }
   }
 
-  async graphql(query, variables = {}) {
-    try {
-      const headers = await this.getHeaders();
-      
-      const response = await axios.post(
-        `${this.baseUrl}/graphql.json`,
-        { query, variables },
-        { headers }
-      );
-      
-      if (response.data.errors) {
-        console.error('[Shopify] GraphQL Errors:', response.data.errors);
-        throw new Error(response.data.errors[0]?.message || 'GraphQL error');
-      }
-      
-      return response.data.data;
-    } catch (error) {
-      console.error('[Shopify] GraphQL Error:', error.response?.data || error.message);
-      throw error;
-    }
-  }
-
-  // DRAFT ORDERS
+  // DRAFT ORDERS - FIXED: Don't filter by status when 'any' is passed
   async getDraftOrders(params = {}) {
     const queryParams = new URLSearchParams({
-      limit: params.limit || 50,
-      status: params.status || 'open',
-      ...params
+      limit: params.limit || 250,
+      ...(params.status && params.status !== 'any' && { status: params.status })
     }).toString();
     
     return this.request('GET', `/draft_orders.json?${queryParams}`);
@@ -153,7 +130,8 @@ class ShopifyService {
         to: invoiceData.to || null,
         from: invoiceData.from || process.env.COMPANY_EMAIL,
         subject: invoiceData.subject || `Invoice from ${process.env.COMPANY_NAME}`,
-        custom_message: invoiceData.message || 'Thank you for your order. Please find your invoice attached.'
+        custom_message: invoiceData.message || 'Thank you for your order. Please find your invoice attached.',
+        bcc: invoiceData.bcc || []
       }
     };
     return this.request('POST', `/draft_orders/${id}/send_invoice.json`, data);
@@ -197,6 +175,10 @@ class ShopifyService {
   }
 
   // CUSTOMERS
+  async getCustomer(id) {
+    return this.request('GET', `/customers/${id}.json`);
+  }
+
   async getCustomers(params = {}) {
     const queryParams = new URLSearchParams({
       limit: params.limit || 50,
@@ -208,6 +190,18 @@ class ShopifyService {
 
   async searchCustomers(query) {
     return this.request('GET', `/customers/search.json?query=${encodeURIComponent(query)}`);
+  }
+
+  // METAFIELDS
+  async createOrderMetafield(orderId, data) {
+    return this.request('POST', `/orders/${orderId}/metafields.json`, {
+      metafield: {
+        namespace: 'phoenix_invoices',
+        key: 'invoice_data',
+        value: JSON.stringify(data),
+        type: 'json'
+      }
+    });
   }
 
   // WEBHOOKS
@@ -227,6 +221,21 @@ class ShopifyService {
 
   async deleteWebhook(id) {
     return this.request('DELETE', `/webhooks/${id}.json`);
+  }
+
+  verifyWebhookSignature(body, hmacHeader) {
+    const crypto = require('crypto');
+    const secret = process.env.SHOPIFY_WEBHOOK_SECRET || process.env.SHOPIFY_CLIENT_SECRET;
+    
+    const hash = crypto
+      .createHmac('sha256', secret)
+      .update(body, 'utf8')
+      .digest('base64');
+    
+    return crypto.timingSafeEqual(
+      Buffer.from(hash),
+      Buffer.from(hmacHeader || '')
+    );
   }
 
   // SHOP
@@ -252,38 +261,45 @@ class ShopifyService {
   }
 
   async registerWebhooks() {
-    const appUrl = process.env.APP_URL || 'https://phoenix-invoice-app.onrender.com';
-    
-    const webhooksToRegister = [
-      { topic: 'draft_orders/create', address: `${appUrl}/webhooks/draft-orders/create` },
-      { topic: 'draft_orders/update', address: `${appUrl}/webhooks/draft-orders/update` },
-      { topic: 'orders/create', address: `${appUrl}/webhooks/orders/create` },
-      { topic: 'orders/paid', address: `${appUrl}/webhooks/orders/paid` }
+    const webhookTopics = [
+      'draft_orders/create',
+      'draft_orders/update',
+      'draft_orders/delete',
+      'orders/create',
+      'orders/paid',
+      'orders/fulfilled'
     ];
 
-    console.log('[Shopify] Registering webhooks...');
-    
-    try {
-      const existing = await this.getWebhooks();
-      const existingTopics = existing.webhooks?.map(w => w.topic) || [];
-      
-      for (const webhook of webhooksToRegister) {
-        if (!existingTopics.includes(webhook.topic)) {
-          try {
-            await this.createWebhook(webhook.topic, webhook.address);
-            console.log(`[Shopify] Registered webhook: ${webhook.topic}`);
-          } catch (err) {
-            console.log(`[Shopify] Webhook ${webhook.topic} may already exist: ${err.message}`);
-          }
-        } else {
-          console.log(`[Shopify] Webhook already exists: ${webhook.topic}`);
-        }
+    const appUrl = process.env.APP_URL || 'https://phoenix-invoice-app.onrender.com';
+    const results = [];
+
+    const existingWebhooks = await this.getWebhooks();
+    const existingTopics = existingWebhooks.webhooks?.map(w => w.topic) || [];
+
+    for (const topic of webhookTopics) {
+      if (existingTopics.includes(topic)) {
+        console.log(`[Shopify] Webhook already registered: ${topic}`);
+        results.push({ topic, status: 'exists' });
+        continue;
       }
-      
-      console.log('[Shopify] Webhook registration complete');
-    } catch (error) {
-      console.error('[Shopify] Failed to register webhooks:', error.message);
+
+      try {
+        const result = await this.request('POST', '/webhooks.json', {
+          webhook: {
+            topic,
+            address: `${appUrl}/webhooks/${topic.replace('/', '-')}`,
+            format: 'json'
+          }
+        });
+        console.log(`[Shopify] Webhook registered: ${topic}`);
+        results.push({ topic, status: 'created', id: result.webhook?.id });
+      } catch (error) {
+        console.error(`[Shopify] Failed to register webhook ${topic}:`, error.message);
+        results.push({ topic, status: 'error', error: error.message });
+      }
     }
+
+    return results;
   }
 }
 
