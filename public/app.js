@@ -46,17 +46,14 @@ document.querySelectorAll('.nav-item').forEach(item => {
 });
 
 function showSection(sectionName) {
-  // Update nav
   document.querySelectorAll('.nav-item').forEach(item => {
     item.classList.toggle('active', item.dataset.section === sectionName);
   });
   
-  // Update sections
   document.querySelectorAll('.section').forEach(section => {
     section.classList.toggle('active', section.id === `${sectionName}-section`);
   });
   
-  // Update title
   const titles = {
     dashboard: 'Dashboard',
     'create-quote': 'Create New Quote',
@@ -66,20 +63,11 @@ function showSection(sectionName) {
   };
   document.getElementById('page-title').textContent = titles[sectionName] || sectionName;
   
-  // Load data for section
   switch (sectionName) {
-    case 'dashboard':
-      loadStats();
-      break;
-    case 'quotes':
-      loadDraftOrders();
-      break;
-    case 'invoices':
-      loadInvoices();
-      break;
-    case 'webhooks':
-      loadWebhooks();
-      break;
+    case 'dashboard': loadStats(); break;
+    case 'quotes': loadDraftOrders(); break;
+    case 'invoices': loadInvoices(); break;
+    case 'webhooks': loadWebhooks(); break;
   }
 }
 
@@ -106,10 +94,7 @@ async function loadDraftOrders() {
     const status = document.getElementById('quote-status-filter').value;
     const data = await api(`/draft-orders?status=${status}`);
     
-    // Sort by created_at descending (newest first)
-    const sortedOrders = data.draftOrders.sort((a, b) => {
-      return new Date(b.created_at) - new Date(a.created_at);
-    });
+    const sortedOrders = data.draftOrders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     
     state.draftOrders = sortedOrders;
     state.selectedQuotes.clear();
@@ -121,12 +106,7 @@ async function loadDraftOrders() {
     
     tbody.innerHTML = sortedOrders.map(order => `
       <tr>
-        <td>
-          <input type="checkbox" 
-                 class="quote-checkbox" 
-                 data-id="${order.id}"
-                 onchange="toggleQuoteSelection(${order.id})">
-        </td>
+        <td><input type="checkbox" class="quote-checkbox" data-id="${order.id}" onchange="toggleQuoteSelection(${order.id})"></td>
         <td><strong>${order.name}</strong></td>
         <td>${getCustomerName(order)}</td>
         <td>${order.email || order.customer?.email || '-'}</td>
@@ -134,15 +114,9 @@ async function loadDraftOrders() {
         <td>${formatDate(order.created_at)}</td>
         <td><span class="status-badge ${order.status}">${order.status}</span></td>
         <td>
-          <button class="btn btn-sm btn-success" onclick="sendQuoteEmail(${order.id})" title="Generate invoice + email">
-            Send
-          </button>
-          <button class="btn btn-sm btn-primary" onclick="createInvoice(${order.id})">
-            Invoice
-          </button>
-          <button class="btn btn-sm btn-secondary" onclick="viewQuoteDetails(${order.id})">
-            View
-          </button>
+          <button class="btn btn-sm btn-success" onclick="sendQuoteEmail(${order.id})" title="Generate invoice + email">Send</button>
+          <button class="btn btn-sm btn-primary" onclick="createInvoice(${order.id})">Invoice</button>
+          <button class="btn btn-sm btn-secondary" onclick="viewQuoteDetails(${order.id})">View</button>
         </td>
       </tr>
     `).join('');
@@ -168,11 +142,7 @@ async function loadInvoices() {
       <tr>
         <td><strong>${invoice.invoiceNumber}</strong></td>
         <td>${formatDate(invoice.createdAt)}</td>
-        <td>
-          <button class="btn btn-sm btn-primary" onclick="downloadInvoice('${invoice.invoiceNumber}')">
-            Download PDF
-          </button>
-        </td>
+        <td><button class="btn btn-sm btn-primary" onclick="downloadInvoice('${invoice.invoiceNumber}')">Download PDF</button></td>
       </tr>
     `).join('');
   } catch (error) {
@@ -199,11 +169,7 @@ async function loadWebhooks() {
         <td><code>${webhook.topic}</code></td>
         <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;">${webhook.address}</td>
         <td>${webhook.format}</td>
-        <td>
-          <button class="btn btn-sm btn-danger" onclick="deleteWebhook(${webhook.id})">
-            Delete
-          </button>
-        </td>
+        <td><button class="btn btn-sm btn-danger" onclick="deleteWebhook(${webhook.id})">Delete</button></td>
       </tr>
     `).join('');
   } catch (error) {
@@ -213,23 +179,17 @@ async function loadWebhooks() {
 
 // Quote actions
 function toggleQuoteSelection(id) {
-  if (state.selectedQuotes.has(id)) {
-    state.selectedQuotes.delete(id);
-  } else {
-    state.selectedQuotes.add(id);
-  }
+  if (state.selectedQuotes.has(id)) state.selectedQuotes.delete(id);
+  else state.selectedQuotes.add(id);
 }
 
 function toggleAllQuotes() {
   const selectAll = document.getElementById('select-all-quotes').checked;
   const checkboxes = document.querySelectorAll('.quote-checkbox');
-  
   state.selectedQuotes.clear();
   checkboxes.forEach(cb => {
     cb.checked = selectAll;
-    if (selectAll) {
-      state.selectedQuotes.add(parseInt(cb.dataset.id));
-    }
+    if (selectAll) state.selectedQuotes.add(parseInt(cb.dataset.id));
   });
 }
 
@@ -238,12 +198,10 @@ async function createInvoice(draftOrderId) {
     <p>Create an invoice for this draft order?</p>
     <div style="margin-top: 16px;">
       <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
-        <input type="checkbox" id="send-email-checkbox">
-        Send invoice email to customer
+        <input type="checkbox" id="send-email-checkbox"> Send invoice email to customer
       </label>
       <label style="display: flex; align-items: center; gap: 8px;">
-        <input type="checkbox" id="complete-order-checkbox">
-        Complete draft order (convert to real order)
+        <input type="checkbox" id="complete-order-checkbox"> Complete draft order (convert to real order)
       </label>
     </div>
   `, [
@@ -269,7 +227,6 @@ async function confirmCreateInvoice(draftOrderId) {
     loadDraftOrders();
     loadStats();
     
-    // Offer to download
     showModal('Invoice Created', `
       <div class="invoice-preview">
         <div class="company-name">${data.invoice.company.name}</div>
@@ -299,12 +256,10 @@ async function batchCreateInvoices() {
     <p>Create invoices for <strong>${count}</strong> selected quote(s)?</p>
     <div style="margin-top: 16px;">
       <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
-        <input type="checkbox" id="batch-send-email">
-        Send invoice emails to customers
+        <input type="checkbox" id="batch-send-email"> Send invoice emails to customers
       </label>
       <label style="display: flex; align-items: center; gap: 8px;">
-        <input type="checkbox" id="batch-complete-order">
-        Complete draft orders (convert to real orders)
+        <input type="checkbox" id="batch-complete-order"> Complete draft orders (convert to real orders)
       </label>
     </div>
   `, [
@@ -327,9 +282,7 @@ async function confirmBatchCreate() {
       body: JSON.stringify({ draftOrderIds, sendEmails, completeOrders })
     });
     
-    showToast(`Created ${data.successful} of ${data.processed} invoices`, 
-              data.failed > 0 ? 'error' : 'success');
-    
+    showToast(`Created ${data.successful} of ${data.processed} invoices`, data.failed > 0 ? 'error' : 'success');
     loadDraftOrders();
     loadStats();
   } catch (error) {
@@ -355,31 +308,18 @@ function viewQuoteDetails(draftOrderId) {
       <h4 style="margin-bottom: 8px; color: var(--text-secondary);">Customer</h4>
       <p><strong>${getCustomerName(order)}</strong></p>
       <p>${order.email || order.customer?.email || 'No email'}</p>
-      ${order.billing_address ? `<p>${order.billing_address.address1 || ''}</p>` : ''}
     </div>
-    
     <h4 style="margin-bottom: 8px; color: var(--text-secondary);">Line Items</h4>
     <table class="data-table" style="margin-bottom: 20px;">
-      <thead>
-        <tr>
-          <th>Item</th>
-          <th>Qty</th>
-          <th>Price</th>
-          <th>Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${lineItems || '<tr><td colspan="4">No items</td></tr>'}
-      </tbody>
+      <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead>
+      <tbody>${lineItems || '<tr><td colspan="4">No items</td></tr>'}</tbody>
     </table>
-    
     <div style="text-align: right;">
       <p><strong>Subtotal:</strong> ${formatCurrency(order.subtotal_price)}</p>
       <p><strong>Shipping:</strong> ${formatCurrency(order.total_shipping_price_set?.shop_money?.amount || 0)}</p>
       <p><strong>Tax:</strong> ${formatCurrency(order.total_tax)}</p>
       <p style="font-size: 18px;"><strong>Total:</strong> ${formatCurrency(order.total_price)}</p>
     </div>
-    
     ${order.note ? `<div style="margin-top: 20px;"><h4>Note</h4><p>${order.note}</p></div>` : ''}
   `, [
     { text: 'Close', class: 'btn-secondary', onclick: 'closeModal()' },
@@ -387,25 +327,18 @@ function viewQuoteDetails(draftOrderId) {
   ]);
 }
 
-// Invoice actions
 function downloadInvoice(invoiceNumber) {
   window.open(`/api/invoices/${invoiceNumber}/download`, '_blank');
 }
 
-// Webhook actions
 async function registerWebhooks() {
   showToast('Registering webhooks...', 'info');
-  
   try {
     const data = await api('/webhooks/register', { method: 'POST' });
-    
     const created = data.results.filter(r => r.status === 'created').length;
     const existing = data.results.filter(r => r.status === 'exists').length;
     const errors = data.results.filter(r => r.status === 'error').length;
-    
-    showToast(`Registered: ${created}, Already existed: ${existing}, Errors: ${errors}`, 
-              errors > 0 ? 'error' : 'success');
-    
+    showToast(`Registered: ${created}, Already existed: ${existing}, Errors: ${errors}`, errors > 0 ? 'error' : 'success');
     loadWebhooks();
   } catch (error) {
     showToast('Failed to register webhooks', 'error');
@@ -414,7 +347,6 @@ async function registerWebhooks() {
 
 async function deleteWebhook(webhookId) {
   if (!confirm('Are you sure you want to delete this webhook?')) return;
-  
   try {
     await api(`/webhooks/${webhookId}`, { method: 'DELETE' });
     showToast('Webhook deleted', 'success');
@@ -426,42 +358,26 @@ async function deleteWebhook(webhookId) {
 
 // Utility functions
 function formatCurrency(amount) {
-  const num = parseFloat(amount) || 0;
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD'
-  }).format(num);
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(parseFloat(amount) || 0);
 }
 
 function formatDate(dateString) {
   if (!dateString) return '-';
-  return new Date(dateString).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric'
-  });
+  return new Date(dateString).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 function getCustomerName(order) {
-  if (order.customer) {
-    return `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim() || 'Guest';
-  }
-  if (order.billing_address) {
-    return order.billing_address.name || 'Guest';
-  }
+  if (order.customer) return `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim() || 'Guest';
+  if (order.billing_address) return order.billing_address.name || 'Guest';
   return 'Guest';
 }
 
-// Modal functions
 function showModal(title, bodyHtml, buttons = []) {
   document.getElementById('modal-title').textContent = title;
   document.getElementById('modal-body').innerHTML = bodyHtml;
-  
-  const footer = document.getElementById('modal-footer');
-  footer.innerHTML = buttons.map(btn => 
+  document.getElementById('modal-footer').innerHTML = buttons.map(btn => 
     `<button class="btn ${btn.class}" onclick="${btn.onclick}">${btn.text}</button>`
   ).join('');
-  
   document.getElementById('modal').classList.add('active');
 }
 
@@ -469,35 +385,25 @@ function closeModal() {
   document.getElementById('modal').classList.remove('active');
 }
 
-// Close modal on outside click
 document.getElementById('modal').addEventListener('click', (e) => {
-  if (e.target.id === 'modal') {
-    closeModal();
-  }
+  if (e.target.id === 'modal') closeModal();
 });
 
-// Toast notifications
 function showToast(message, type = 'info') {
   const container = document.getElementById('toast-container');
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
   toast.textContent = message;
-  
   container.appendChild(toast);
-  
   setTimeout(() => {
     toast.style.animation = 'toastSlide 0.3s ease reverse';
     setTimeout(() => toast.remove(), 300);
   }, 4000);
 }
 
-// Refresh data
 function refreshData() {
   const activeSection = document.querySelector('.section.active');
-  if (activeSection) {
-    const sectionName = activeSection.id.replace('-section', '');
-    showSection(sectionName);
-  }
+  if (activeSection) showSection(activeSection.id.replace('-section', ''));
   showToast('Data refreshed', 'success');
 }
 
@@ -506,21 +412,14 @@ async function sendQuoteEmail(draftOrderId) {
   showToast('Generating invoice and email...', 'info');
   
   try {
-    // First generate the invoice
     const invoiceData = await api(`/draft-orders/${draftOrderId}/create-invoice`, {
       method: 'POST',
       body: JSON.stringify({ sendEmail: false, completeOrder: false })
     });
     
-    // Then generate the email
-    const emailData = await api(`/draft-orders/${draftOrderId}/generate-email`, {
-      method: 'POST'
-    });
-    
-    // Store email data for copy/gmail functions
+    const emailData = await api(`/draft-orders/${draftOrderId}/generate-email`, { method: 'POST' });
     window.currentEmailData = emailData;
     
-    // Show modal with HTML email preview and download option
     showModal('Send Quote Email', `
       <div style="margin-bottom: 16px;">
         <strong>To:</strong> ${emailData.to}<br>
@@ -534,71 +433,51 @@ async function sendQuoteEmail(draftOrderId) {
         <input type="hidden" id="email-body-raw" value="${encodeURIComponent(emailData.body)}">
       </div>
       <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-        <button class="btn btn-secondary" onclick="copyEmailToClipboard()">
-          📋 Copy HTML
-        </button>
-        <button class="btn btn-secondary" onclick="copyEmailAsText()">
-          📝 Copy as Text
-        </button>
-        <button class="btn btn-secondary" onclick="downloadInvoice('${invoiceData.invoice.invoiceNumber}')">
-          📄 Download Invoice
-        </button>
+        <button class="btn btn-secondary" onclick="copyEmailToClipboard()">📋 Copy HTML</button>
+        <button class="btn btn-secondary" onclick="copyEmailAsText()">📝 Copy as Text</button>
+        <button class="btn btn-secondary" onclick="downloadInvoice('${invoiceData.invoice.invoiceNumber}')">📄 Download Invoice</button>
       </div>
     `, [
       { text: 'Cancel', class: 'btn-secondary', onclick: 'closeModal()' },
       { text: 'Open in Gmail', class: 'btn-primary', onclick: `openInGmail('${emailData.to}', '${encodeURIComponent(emailData.subject)}')` }
     ]);
-    
   } catch (error) {
     showToast('Failed to generate email: ' + error.message, 'error');
   }
 }
 
 function copyEmailToClipboard() {
-  const emailBody = decodeURIComponent(document.getElementById('email-body-raw').value);
-  navigator.clipboard.writeText(emailBody).then(() => {
-    showToast('HTML email copied to clipboard!', 'success');
-  });
+  navigator.clipboard.writeText(decodeURIComponent(document.getElementById('email-body-raw').value))
+    .then(() => showToast('HTML email copied to clipboard!', 'success'));
 }
 
 function copyEmailAsText() {
-  const emailPreview = document.getElementById('email-preview');
-  const textContent = emailPreview.innerText || emailPreview.textContent;
-  navigator.clipboard.writeText(textContent).then(() => {
-    showToast('Plain text email copied to clipboard!', 'success');
-  });
+  navigator.clipboard.writeText(document.getElementById('email-preview').innerText)
+    .then(() => showToast('Plain text email copied to clipboard!', 'success'));
 }
 
 function openInGmail(to, subject) {
-  const emailPreview = document.getElementById('email-preview');
-  const textContent = emailPreview.innerText || emailPreview.textContent;
-  const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${to}&su=${subject}&body=${encodeURIComponent(textContent)}`;
-  window.open(gmailUrl, '_blank');
+  const text = document.getElementById('email-preview').innerText;
+  window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${to}&su=${subject}&body=${encodeURIComponent(text)}`, '_blank');
   closeModal();
   showToast('Gmail opened - attach the invoice PDF!', 'info');
 }
 
 // ========== CREATE QUOTE FUNCTIONS ==========
 
-// Store for quote line items
 const quoteLineItems = [];
 let searchTimeout = null;
 let selectedCustomerId = null;
+let quoteShippingCost = 0;
 
-// Search customers
 async function searchCustomers(query) {
   const resultsDiv = document.getElementById('customer-search-results');
-  
-  if (!query || query.length < 2) {
-    resultsDiv.classList.remove('active');
-    return;
-  }
+  if (!query || query.length < 2) { resultsDiv.classList.remove('active'); return; }
   
   clearTimeout(searchTimeout);
   searchTimeout = setTimeout(async () => {
     try {
       const data = await api(`/customers/search?q=${encodeURIComponent(query)}`);
-      
       if (data.customers && data.customers.length > 0) {
         resultsDiv.innerHTML = data.customers.map(c => `
           <div class="search-result-item" onclick="selectCustomer(${JSON.stringify(c).replace(/"/g, '&quot;')})">
@@ -611,13 +490,10 @@ async function searchCustomers(query) {
         resultsDiv.innerHTML = '<div class="search-result-item"><div class="subtitle">No customers found</div></div>';
         resultsDiv.classList.add('active');
       }
-    } catch (error) {
-      console.error('Customer search error:', error);
-    }
+    } catch (error) { console.error('Customer search error:', error); }
   }, 300);
 }
 
-// Select customer from search
 function selectCustomer(customer) {
   selectedCustomerId = customer.id;
   document.getElementById('customer-first-name').value = customer.first_name || '';
@@ -625,7 +501,6 @@ function selectCustomer(customer) {
   document.getElementById('customer-email').value = customer.email || '';
   document.getElementById('customer-phone').value = customer.phone || '';
   
-  // Fill address if available
   if (customer.default_address) {
     const addr = customer.default_address;
     document.getElementById('shipping-address1').value = addr.address1 || '';
@@ -640,20 +515,14 @@ function selectCustomer(customer) {
   showToast('Customer selected!', 'success');
 }
 
-// Search products
 async function searchProducts(query) {
   const resultsDiv = document.getElementById('product-search-results');
-  
-  if (!query || query.length < 2) {
-    resultsDiv.classList.remove('active');
-    return;
-  }
+  if (!query || query.length < 2) { resultsDiv.classList.remove('active'); return; }
   
   clearTimeout(searchTimeout);
   searchTimeout = setTimeout(async () => {
     try {
       const data = await api(`/products/search?q=${encodeURIComponent(query)}`);
-      
       if (data.products && data.products.length > 0) {
         resultsDiv.innerHTML = data.products.map(p => {
           const variant = p.variants?.[0];
@@ -661,12 +530,7 @@ async function searchProducts(query) {
           const image = p.image?.src || p.images?.[0]?.src || '';
           return `
             <div class="search-result-item" onclick='addProductToQuote(${JSON.stringify({
-              id: p.id,
-              variantId: variant?.id,
-              title: p.title,
-              price: price,
-              image: image,
-              sku: variant?.sku || ''
+              id: p.id, variantId: variant?.id, title: p.title, price: price, image: image, sku: variant?.sku || ''
             }).replace(/'/g, "&#39;")})'>
               <div class="title">${p.title}</div>
               <div class="subtitle">${variant?.sku || 'No SKU'}</div>
@@ -679,24 +543,14 @@ async function searchProducts(query) {
         resultsDiv.innerHTML = '<div class="search-result-item"><div class="subtitle">No products found</div></div>';
         resultsDiv.classList.add('active');
       }
-    } catch (error) {
-      console.error('Product search error:', error);
-    }
+    } catch (error) { console.error('Product search error:', error); }
   }, 300);
 }
 
-// Add product to quote
 function addProductToQuote(product) {
-  // Check if already in list
   const existing = quoteLineItems.find(item => item.variantId === product.variantId);
-  if (existing) {
-    existing.quantity++;
-  } else {
-    quoteLineItems.push({
-      ...product,
-      quantity: 1
-    });
-  }
+  if (existing) existing.quantity++;
+  else quoteLineItems.push({ ...product, quantity: 1 });
   
   renderLineItems();
   document.getElementById('product-search').value = '';
@@ -704,40 +558,42 @@ function addProductToQuote(product) {
   showToast(`Added ${product.title}`, 'success');
 }
 
-// Remove product from quote
 function removeFromQuote(variantId) {
   const index = quoteLineItems.findIndex(item => item.variantId === variantId);
-  if (index > -1) {
-    quoteLineItems.splice(index, 1);
-    renderLineItems();
-  }
+  if (index > -1) { quoteLineItems.splice(index, 1); renderLineItems(); }
 }
 
-// Update quantity
 function updateQuantity(variantId, quantity) {
   const item = quoteLineItems.find(i => i.variantId === variantId);
-  if (item) {
-    item.quantity = Math.max(1, parseInt(quantity) || 1);
-    renderLineItems();
-  }
+  if (item) { item.quantity = Math.max(1, parseInt(quantity) || 1); renderLineItems(); }
 }
 
-// Render line items
+function updateShippingCost(value) {
+  quoteShippingCost = parseFloat(value) || 0;
+  updateQuoteTotals();
+}
+
+function updateQuoteTotals() {
+  let subtotal = 0;
+  quoteLineItems.forEach(item => subtotal += parseFloat(item.price) * item.quantity);
+  const total = subtotal + quoteShippingCost;
+  
+  document.getElementById('quote-subtotal').textContent = `$${subtotal.toFixed(2)}`;
+  document.getElementById('quote-shipping-display').textContent = quoteShippingCost > 0 ? `$${quoteShippingCost.toFixed(2)}` : 'Free';
+  document.getElementById('quote-total').textContent = `$${total.toFixed(2)}`;
+}
+
 function renderLineItems() {
   const container = document.getElementById('quote-line-items');
   
   if (quoteLineItems.length === 0) {
     container.innerHTML = '<p class="empty-state">No products added yet. Search above to add products.</p>';
-    document.getElementById('quote-subtotal').textContent = '$0.00';
-    document.getElementById('quote-total').textContent = '$0.00';
+    updateQuoteTotals();
     return;
   }
   
-  let subtotal = 0;
-  
   container.innerHTML = quoteLineItems.map(item => {
     const lineTotal = parseFloat(item.price) * item.quantity;
-    subtotal += lineTotal;
     return `
       <div class="line-item">
         <img src="${item.image || 'https://via.placeholder.com/60'}" alt="${item.title}" class="line-item-image">
@@ -750,56 +606,44 @@ function renderLineItems() {
           <span>× $${parseFloat(item.price).toFixed(2)}</span>
         </div>
         <div class="line-item-price">$${lineTotal.toFixed(2)}</div>
-        <button class="line-item-remove" onclick="removeFromQuote(${item.variantId})">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-          </svg>
-        </button>
+        <button class="line-item-remove" onclick="removeFromQuote(${item.variantId})">×</button>
       </div>
     `;
   }).join('');
   
-  document.getElementById('quote-subtotal').textContent = `$${subtotal.toFixed(2)}`;
-  document.getElementById('quote-total').textContent = `$${subtotal.toFixed(2)}`;
+  updateQuoteTotals();
 }
 
-// Clear quote form
 function clearQuoteForm() {
   selectedCustomerId = null;
   quoteLineItems.length = 0;
+  quoteShippingCost = 0;
   
-  document.getElementById('customer-search').value = '';
-  document.getElementById('customer-first-name').value = '';
-  document.getElementById('customer-last-name').value = '';
-  document.getElementById('customer-email').value = '';
-  document.getElementById('customer-phone').value = '';
-  document.getElementById('shipping-address1').value = '';
-  document.getElementById('shipping-address2').value = '';
-  document.getElementById('shipping-city').value = '';
-  document.getElementById('shipping-state').value = '';
-  document.getElementById('shipping-zip').value = '';
-  document.getElementById('quote-notes').value = '';
+  ['customer-search', 'customer-first-name', 'customer-last-name', 'customer-email', 'customer-phone',
+   'shipping-address1', 'shipping-address2', 'shipping-city', 'shipping-state', 'shipping-zip', 'quote-notes'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  
+  const shippingInput = document.getElementById('shipping-cost');
+  if (shippingInput) shippingInput.value = '0';
   
   renderLineItems();
   showToast('Form cleared', 'info');
 }
 
-// Create quote in Shopify
 async function createQuote() {
-  if (quoteLineItems.length === 0) {
-    showToast('Please add at least one product', 'error');
-    return;
-  }
+  if (quoteLineItems.length === 0) { showToast('Please add at least one product', 'error'); return; }
   
   const email = document.getElementById('customer-email').value;
-  if (!email) {
-    showToast('Customer email is required', 'error');
-    return;
-  }
+  if (!email) { showToast('Customer email is required', 'error'); return; }
   
   showToast('Creating quote in Shopify...', 'info');
   
   try {
+    const shippingInput = document.getElementById('shipping-cost');
+    const shippingCost = shippingInput ? parseFloat(shippingInput.value) || 0 : quoteShippingCost;
+    
     const quoteData = {
       customer: selectedCustomerId ? { id: selectedCustomerId } : {
         firstName: document.getElementById('customer-first-name').value,
@@ -807,9 +651,13 @@ async function createQuote() {
         email: email,
         phone: document.getElementById('customer-phone').value
       },
+      email: email,
       lineItems: quoteLineItems.map(item => ({
         variantId: item.variantId,
-        quantity: item.quantity
+        productId: item.id,
+        title: item.title,
+        quantity: item.quantity,
+        price: item.price
       })),
       shippingAddress: {
         firstName: document.getElementById('customer-first-name').value,
@@ -822,8 +670,11 @@ async function createQuote() {
         country: 'US',
         phone: document.getElementById('customer-phone').value
       },
+      shippingCost: shippingCost,
       note: document.getElementById('quote-notes').value
     };
+    
+    console.log('Sending quote data:', quoteData);
     
     const result = await api('/draft-orders', {
       method: 'POST',
@@ -832,8 +683,6 @@ async function createQuote() {
     
     showToast(`Quote ${result.draftOrder.name} created successfully!`, 'success');
     clearQuoteForm();
-    
-    // Refresh draft orders and switch to quotes view
     loadDraftOrders();
     showSection('quotes');
     
@@ -844,26 +693,17 @@ async function createQuote() {
   }
 }
 
-// Create quote and send email
 async function createQuoteAndSend() {
   const draftOrder = await createQuote();
-  
   if (draftOrder) {
-    // Wait a moment for Shopify to process, then generate email
-    setTimeout(async () => {
-      await sendQuoteEmail(draftOrder.id);
-    }, 1000);
+    setTimeout(async () => { await sendQuoteEmail(draftOrder.id); }, 1000);
   }
 }
 
-// Close search results when clicking outside
 document.addEventListener('click', function(e) {
   if (!e.target.closest('.search-container')) {
     document.querySelectorAll('.search-results').forEach(el => el.classList.remove('active'));
   }
 });
 
-// Initialize
-document.addEventListener('DOMContentLoaded', () => {
-  showSection('dashboard');
-});
+document.addEventListener('DOMContentLoaded', () => { showSection('dashboard'); });
