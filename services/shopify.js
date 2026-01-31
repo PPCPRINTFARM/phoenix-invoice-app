@@ -8,16 +8,12 @@ const axios = require('axios');
 class ShopifyService {
   constructor() {
     this.storeUrl = process.env.SHOPIFY_STORE_URL;
-    this.accessToken = process.env.SHOPIFY_ACCESS_TOKEN; // Static shpat_ token
+    this.accessToken = process.env.SHOPIFY_ACCESS_TOKEN;
     this.apiVersion = '2024-01';
     
-    // Base URL for API requests
     this.baseUrl = `https://${this.storeUrl}/admin/api/${this.apiVersion}`;
   }
 
-  /**
-   * Get headers with access token
-   */
   getHeaders() {
     return {
       'Content-Type': 'application/json',
@@ -25,9 +21,6 @@ class ShopifyService {
     };
   }
 
-  /**
-   * Make authenticated request to Shopify API
-   */
   async request(method, endpoint, data = null) {
     try {
       const headers = this.getHeaders();
@@ -47,9 +40,6 @@ class ShopifyService {
     }
   }
 
-  /**
-   * Make GraphQL request to Shopify Admin API
-   */
   async graphql(query, variables = {}) {
     try {
       const headers = this.getHeaders();
@@ -72,10 +62,7 @@ class ShopifyService {
     }
   }
 
-  // ==========================================
-  // DRAFT ORDERS (QUOTES)
-  // ==========================================
-
+  // DRAFT ORDERS
   async getDraftOrders(params = {}) {
     const queryParams = new URLSearchParams({
       limit: params.limit || 50,
@@ -88,6 +75,10 @@ class ShopifyService {
 
   async getDraftOrder(id) {
     return this.request('GET', `/draft_orders/${id}.json`);
+  }
+
+  async createDraftOrder(data) {
+    return this.request('POST', '/draft_orders.json', { draft_order: data });
   }
 
   async updateDraftOrder(id, data) {
@@ -114,10 +105,7 @@ class ShopifyService {
     return this.request('DELETE', `/draft_orders/${id}.json`);
   }
 
-  // ==========================================
   // ORDERS
-  // ==========================================
-
   async getOrders(params = {}) {
     const queryParams = new URLSearchParams({
       limit: params.limit || 50,
@@ -132,10 +120,7 @@ class ShopifyService {
     return this.request('GET', `/orders/${id}.json`);
   }
 
-  // ==========================================
   // PRODUCTS
-  // ==========================================
-
   async getProducts(params = {}) {
     const queryParams = new URLSearchParams({
       limit: params.limit || 50,
@@ -149,10 +134,11 @@ class ShopifyService {
     return this.request('GET', `/products/${id}.json`);
   }
 
-  // ==========================================
-  // CUSTOMERS
-  // ==========================================
+  async searchProducts(query) {
+    return this.request('GET', `/products.json?title=${encodeURIComponent(query)}`);
+  }
 
+  // CUSTOMERS
   async getCustomers(params = {}) {
     const queryParams = new URLSearchParams({
       limit: params.limit || 50,
@@ -166,10 +152,7 @@ class ShopifyService {
     return this.request('GET', `/customers/search.json?query=${encodeURIComponent(query)}`);
   }
 
-  // ==========================================
   // WEBHOOKS
-  // ==========================================
-
   async getWebhooks() {
     return this.request('GET', '/webhooks.json');
   }
@@ -188,10 +171,7 @@ class ShopifyService {
     return this.request('DELETE', `/webhooks/${id}.json`);
   }
 
-  // ==========================================
-  // SHOP INFO
-  // ==========================================
-
+  // SHOP
   async getShop() {
     return this.request('GET', '/shop.json');
   }
