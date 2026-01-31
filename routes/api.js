@@ -17,15 +17,22 @@ router.get('/draft-orders', async (req, res, next) => {
   try {
     const { status = 'open', limit = 30 } = req.query;
     
-    // Fetch drafts from Shopify (already sorted newest first via order param)
-    const result = await shopifyService.getDraftOrders({ status, limit: parseInt(limit) });
+    // Fetch ALL drafts from Shopify (up to 250)
+    const result = await shopifyService.getDraftOrders({ status, limit: 250 });
     
-    const draftOrders = result.draft_orders || [];
+    let draftOrders = result.draft_orders || [];
+    
+    // Sort by created_at descending (NEWEST FIRST)
+    draftOrders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    
+    // Return only the requested limit
+    const limitedOrders = draftOrders.slice(0, parseInt(limit));
     
     res.json({
       success: true,
-      count: draftOrders.length,
-      draftOrders: draftOrders
+      count: limitedOrders.length,
+      totalCount: draftOrders.length,
+      draftOrders: limitedOrders
     });
   } catch (error) {
     next(error);
