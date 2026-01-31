@@ -1,6 +1,6 @@
 /**
  * Shopify API Service - Phoenix Invoice App
- * Uses static Admin API Access Token (shpat_)
+ * Uses Client Credentials OAuth flow for Admin API access
  */
 
 const axios = require('axios');
@@ -8,22 +8,63 @@ const axios = require('axios');
 class ShopifyService {
   constructor() {
     this.storeUrl = process.env.SHOPIFY_STORE_URL;
-    this.accessToken = process.env.SHOPIFY_ACCESS_TOKEN;
+    this.clientId = process.env.SHOPIFY_CLIENT_ID;
+    this.clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
     this.apiVersion = '2024-01';
+    
+    // Token management
+    this.accessToken = null;
+    this.tokenExpiry = null;
     
     this.baseUrl = `https://${this.storeUrl}/admin/api/${this.apiVersion}`;
   }
 
-  getHeaders() {
+  async getAccessToken() {
+    // Check if we have a valid token (with 5 minute buffer)
+    const bufferMs = 5 * 60 * 1000;
+    if (this.accessToken && this.tokenExpiry && Date.now() < (this.tokenExpiry - bufferMs)) {
+      return this.accessToken;
+    }
+
+    console.log('[Shopify] Fetching new access token via client credentials...');
+    
+    try {
+      const response = await axios.post(
+        `https://${this.storeUrl}/admin/oauth/access_token`,
+        {
+          grant_type: 'client_credentials',
+          client_id: this.clientId,
+          client_secret: this.clientSecret
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      this.accessToken = response.data.access_token;
+      this.tokenExpiry = Date.now() + (response.data.expires_in * 1000);
+      
+      console.log('[Shopify] Access token acquired successfully');
+      return this.accessToken;
+    } catch (error) {
+      console.error('[Shopify] Failed to get access token:', error.response?.data || error.message);
+      throw new Error(`Failed to authenticate with Shopify: ${error.message}`);
+    }
+  }
+
+  async getHeaders() {
+    const token = await this.getAccessToken();
     return {
       'Content-Type': 'application/json',
-      'X-Shopify-Access-Token': this.accessToken
+      'X-Shopify-Access-Token': token
     };
   }
 
   async request(method, endpoint, data = null) {
     try {
-      const headers = this.getHeaders();
+      const headers = await this.getHeaders();
       
       const config = {
         method,
@@ -35,6 +76,23 @@ class ShopifyService {
       const response = await axios(config);
       return response.data;
     } catch (error) {
+      if (error.response?.status === 401) {
+        console.log('[Shopify] Got 401, forcing token refresh...');
+        this.accessToken = null;
+        this.tokenExpiry = null;
+        
+        const headers = await this.getHeaders();
+        const config = {
+          method,
+          url: `${this.baseUrl}${endpoint}`,
+          headers,
+          ...(data && { data })
+        };
+        
+        const response = await axios(config);
+        return response.data;
+      }
+      
       console.error(`[Shopify] API Error [${endpoint}]:`, error.response?.data || error.message);
       throw new Error(error.response?.data?.errors || error.message);
     }
@@ -42,7 +100,7 @@ class ShopifyService {
 
   async graphql(query, variables = {}) {
     try {
-      const headers = this.getHeaders();
+      const headers = await this.getHeaders();
       
       const response = await axios.post(
         `${this.baseUrl}/graphql.json`,
