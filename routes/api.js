@@ -17,8 +17,8 @@ router.get('/draft-orders', async (req, res, next) => {
   try {
     const { status = 'open', limit = 30 } = req.query;
     
-    // Fetch ALL drafts from Shopify (up to 250)
-    const result = await shopifyService.getDraftOrders({ status, limit: 250 });
+    // Fetch ALL drafts from Shopify (up to 500)
+    const result = await shopifyService.getDraftOrders({ status, limit: 500 });
     
     let draftOrders = result.draft_orders || [];
     
@@ -35,6 +35,48 @@ router.get('/draft-orders', async (req, res, next) => {
       draftOrders: limitedOrders
     });
   } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Create a new draft order (quote)
+ */
+router.post('/draft-orders', async (req, res, next) => {
+  try {
+    const { customer, line_items, note, email } = req.body;
+    
+    if (!line_items || !line_items.length) {
+      return res.status(400).json({
+        success: false,
+        error: 'At least one line item is required'
+      });
+    }
+    
+    const draftOrderData = {
+      line_items: line_items.map(item => ({
+        variant_id: item.variant_id,
+        product_id: item.product_id,
+        title: item.title,
+        quantity: item.quantity || 1,
+        price: item.price
+      })),
+      ...(customer && { customer: { id: customer.id } }),
+      ...(email && { email }),
+      ...(note && { note }),
+      use_customer_default_address: true
+    };
+    
+    console.log('[API] Creating draft order:', JSON.stringify(draftOrderData, null, 2));
+    
+    const result = await shopifyService.createDraftOrder(draftOrderData);
+    
+    res.json({
+      success: true,
+      draftOrder: result.draft_order
+    });
+  } catch (error) {
+    console.error('[API] Create draft order error:', error.message);
     next(error);
   }
 });
@@ -491,7 +533,7 @@ router.get('/products/search', async (req, res, next) => {
     const { q, limit = 50 } = req.query;
     
     // Fetch all products and filter by search term
-    const result = await shopifyService.getProducts({ limit: 250 });
+    const result = await shopifyService.getProducts({ limit: 500 });
     const products = result.products || [];
     
     let filtered = products;
