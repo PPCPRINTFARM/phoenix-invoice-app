@@ -52,6 +52,7 @@ router.post('/draft-orders', async (req, res, next) => {
     const email = req.body.email;
     const note = req.body.note || req.body.notes;
     const shippingAddress = req.body.shipping_address || req.body.shippingAddress;
+    const shippingCost = req.body.shipping_cost || req.body.shippingCost || req.body.shipping;
     
     if (!lineItems || !lineItems.length) {
       return res.status(400).json({
@@ -70,6 +71,14 @@ router.post('/draft-orders', async (req, res, next) => {
       })),
       use_customer_default_address: false
     };
+    
+    // Add shipping line if cost provided
+    if (shippingCost && parseFloat(shippingCost) > 0) {
+      draftOrderData.shipping_line = {
+        title: 'Shipping',
+        price: parseFloat(shippingCost).toFixed(2)
+      };
+    }
     
     // Add customer if provided
     if (customer && customer.id) {
