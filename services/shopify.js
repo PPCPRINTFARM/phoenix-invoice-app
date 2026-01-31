@@ -347,6 +347,45 @@ class ShopifyService {
       };
     }
   }
+
+  /**
+   * Register webhooks for the app
+   */
+  async registerWebhooks() {
+    const appUrl = process.env.APP_URL || 'https://phoenix-invoice-app.onrender.com';
+    
+    const webhooksToRegister = [
+      { topic: 'draft_orders/create', address: `${appUrl}/webhooks/draft-orders/create` },
+      { topic: 'draft_orders/update', address: `${appUrl}/webhooks/draft-orders/update` },
+      { topic: 'orders/create', address: `${appUrl}/webhooks/orders/create` },
+      { topic: 'orders/paid', address: `${appUrl}/webhooks/orders/paid` }
+    ];
+
+    console.log('[Shopify] Registering webhooks...');
+    
+    try {
+      // Get existing webhooks
+      const existing = await this.getWebhooks();
+      const existingTopics = existing.webhooks?.map(w => w.topic) || [];
+      
+      for (const webhook of webhooksToRegister) {
+        if (!existingTopics.includes(webhook.topic)) {
+          try {
+            await this.createWebhook(webhook.topic, webhook.address);
+            console.log(`[Shopify] Registered webhook: ${webhook.topic}`);
+          } catch (err) {
+            console.log(`[Shopify] Webhook ${webhook.topic} may already exist: ${err.message}`);
+          }
+        } else {
+          console.log(`[Shopify] Webhook already exists: ${webhook.topic}`);
+        }
+      }
+      
+      console.log('[Shopify] Webhook registration complete');
+    } catch (error) {
+      console.error('[Shopify] Failed to register webhooks:', error.message);
+    }
+  }
 }
 
 // Export singleton instance
