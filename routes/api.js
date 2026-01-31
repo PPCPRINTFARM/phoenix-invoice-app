@@ -10,29 +10,22 @@ const invoiceService = require('../services/invoice');
 const path = require('path');
 
 /**
- * Get all draft orders (quotes)
- * Default: Last 30 quotes sorted by newest first
+ * Get draft orders (quotes)
+ * Default: Last 30 OPEN quotes, newest first
  */
 router.get('/draft-orders', async (req, res, next) => {
   try {
-    const { status = 'any', limit = 30 } = req.query;
+    const { status = 'open', limit = 30 } = req.query;
     
-    // Fetch all drafts (status='any' means no filter)
-    const result = await shopifyService.getDraftOrders({ status, limit: 250 });
+    // Fetch drafts from Shopify (already sorted newest first via order param)
+    const result = await shopifyService.getDraftOrders({ status, limit: parseInt(limit) });
     
-    let draftOrders = result.draft_orders || [];
-    
-    // Sort by created_at descending (newest first)
-    draftOrders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    
-    // Limit results
-    const limitedOrders = draftOrders.slice(0, parseInt(limit));
+    const draftOrders = result.draft_orders || [];
     
     res.json({
       success: true,
-      count: limitedOrders.length,
-      totalCount: draftOrders.length,
-      draftOrders: limitedOrders
+      count: draftOrders.length,
+      draftOrders: draftOrders
     });
   } catch (error) {
     next(error);
