@@ -15,6 +15,10 @@ class ShopifyService {
     // Token cache
     this.accessToken = null;
     this.tokenExpiry = null;
+    
+    // Products cache (refresh every 5 minutes)
+    this.productsCache = null;
+    this.productsCacheExpiry = null;
   }
 
   /**
@@ -55,8 +59,9 @@ class ShopifyService {
 
   /**
    * Make authenticated request to Shopify API
+   * Returns { data, headers } to access pagination info
    */
-  async request(method, endpoint, data = null, retry = true) {
+  async requestWithHeaders(method, endpoint, data = null, retry = true) {
     try {
       const token = await this.getAccessToken();
       
@@ -71,14 +76,14 @@ class ShopifyService {
       };
       
       const response = await axios(config);
-      return response.data;
+      return { data: response.data, headers: response.headers };
     } catch (error) {
       // If 401, clear token and retry once
       if (error.response?.status === 401 && retry) {
         console.log('[Shopify] Token expired, refreshing...');
         this.accessToken = null;
         this.tokenExpiry = null;
-        return this.request(method, endpoint, data, false);
+        return this.requestWithHeaders(method, endpoint, data, false);
       }
       
       console.error(`[Shopify] API Error [${endpoint}]:`, error.response?.data || error.message);
@@ -87,19 +92,71 @@ class ShopifyService {
   }
 
   /**
-   * Get all draft orders (quotes) - sorted newest first
+   * Make authenticated request to Shopify API (returns data only)
+   */
+  async request(method, endpoint, data = null, retry = true) {
+    const result = await this.requestWithHeaders(method, endpoint, data, retry);
+    return result.data;
+  }
+
+  /**
+   * Parse Link header to get next page URL
+   */
+  parseNextPageUrl(linkHeader) {
+    if (!linkHeader) return null;
+    
+    const links = linkHeader.split(',');
+    for (const link of links) {
+      const match = link.match(/<([^>]+)>;\s*rel="next"/);
+      if (match) {
+        return match[1];
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Get all draft orders with pagination (to get newest)
+   * Fetches multiple pages and returns all, sorted newest first
    */
   async getDraftOrders(params = {}) {
     console.log('[Shopify] Fetching draft orders...', params);
-    const queryParams = new URLSearchParams({
-      limit: params.limit || 250,
-      order: 'created_at desc',
-      ...(params.status && params.status !== 'any' && { status: params.status })
-    }).toString();
     
-    const result = await this.request('GET', `/draft_orders.json?${queryParams}`);
-    console.log('[Shopify] Draft orders result:', result.draft_orders?.length || 0, 'orders');
-    return result;
+    const status = params.status || 'open';
+    
+    let allDrafts = [];
+    let endpoint = `/draft_orders.json?limit=250${status !== 'any' ? `&status=${status}` : ''}`;
+    let pageCount = 0;
+    const maxPages = 10; // Safety limit - 2500 max drafts
+    
+    // Paginate through all drafts
+    while (endpoint && pageCount < maxPages) {
+      pageCount++;
+      console.log(`[Shopify] Fetching draft orders page ${pageCount}...`);
+      
+      const { data, headers } = await this.requestWithHeaders('GET', endpoint);
+      const drafts = data.draft_orders || [];
+      allDrafts = allDrafts.concat(drafts);
+      
+      console.log(`[Shopify] Page ${pageCount}: ${drafts.length} drafts, total: ${allDrafts.length}`);
+      
+      // Check for next page
+      const nextUrl = this.parseNextPageUrl(headers.link);
+      if (nextUrl) {
+        // Extract just the path and query from the full URL
+        const urlObj = new URL(nextUrl);
+        endpoint = urlObj.pathname.replace('/admin/api/2024-01', '') + urlObj.search;
+      } else {
+        endpoint = null;
+      }
+    }
+    
+    console.log(`[Shopify] Total draft orders fetched: ${allDrafts.length}`);
+    
+    // Sort by created_at descending (newest first)
+    allDrafts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    
+    return { draft_orders: allDrafts };
   }
 
   /**
@@ -184,17 +241,50 @@ class ShopifyService {
   }
 
   /**
-   * Get products
+   * Get ALL products with pagination (cached for 5 minutes)
    */
   async getProducts(params = {}) {
     console.log('[Shopify] Fetching products...', params);
-    const queryParams = new URLSearchParams({
-      limit: params.limit || 50
-    }).toString();
     
-    const result = await this.request('GET', `/products.json?${queryParams}`);
-    console.log('[Shopify] Products result:', result.products?.length || 0, 'products');
-    return result;
+    // Return cached products if still valid
+    if (this.productsCache && this.productsCacheExpiry && Date.now() < this.productsCacheExpiry) {
+      console.log('[Shopify] Returning cached products:', this.productsCache.length);
+      return { products: this.productsCache };
+    }
+    
+    let allProducts = [];
+    let endpoint = '/products.json?limit=250';
+    let pageCount = 0;
+    const maxPages = 10; // Safety limit - 2500 max products
+    
+    // Paginate through all products
+    while (endpoint && pageCount < maxPages) {
+      pageCount++;
+      console.log(`[Shopify] Fetching products page ${pageCount}...`);
+      
+      const { data, headers } = await this.requestWithHeaders('GET', endpoint);
+      const products = data.products || [];
+      allProducts = allProducts.concat(products);
+      
+      console.log(`[Shopify] Page ${pageCount}: ${products.length} products, total: ${allProducts.length}`);
+      
+      // Check for next page
+      const nextUrl = this.parseNextPageUrl(headers.link);
+      if (nextUrl) {
+        const urlObj = new URL(nextUrl);
+        endpoint = urlObj.pathname.replace('/admin/api/2024-01', '') + urlObj.search;
+      } else {
+        endpoint = null;
+      }
+    }
+    
+    console.log(`[Shopify] Total products fetched: ${allProducts.length}`);
+    
+    // Cache products for 5 minutes
+    this.productsCache = allProducts;
+    this.productsCacheExpiry = Date.now() + (5 * 60 * 1000);
+    
+    return { products: allProducts };
   }
 
   /**
