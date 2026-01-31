@@ -9,8 +9,8 @@ const axios = require('axios');
 class ShopifyService {
   constructor() {
     this.storeUrl = process.env.SHOPIFY_STORE_URL;
-    this.clientId = process.env.SHOPIFY_CLIENT_ID;
-    this.clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
+    this.clientId = process.env.SHOPIFY_API_KEY;      // Also known as Client ID
+    this.clientSecret = process.env.SHOPIFY_API_SECRET; // Also known as Client Secret
     this.apiVersion = '2026-01';
     
     // Token management
