@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -258,7 +257,13 @@
               </div>
               <div class="total-row">
                 <span>Shipping:</span>
-                <span>Free</span>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span>$</span>
+                  <input type="number" id="shipping-cost" value="0" min="0" step="0.01" 
+                         style="width: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid #374151; background: #1f2937; color: white; font-size: 14px;"
+                         onchange="updateShippingCost(this.value)" onkeyup="updateShippingCost(this.value)">
+                  <span id="quote-shipping-display" style="color: #9ca3af; font-size: 12px;"></span>
+                </div>
               </div>
               <div class="total-row total-final">
                 <span>Total:</span>
@@ -303,10 +308,8 @@
           <h2>Draft Quotes</h2>
           <div class="section-actions">
             <select id="quote-status-filter" onchange="loadDraftOrders()">
-              <option value="any" selected>All Drafts</option>
-              <option value="open">Open</option>
+              <option value="open" selected>Open</option>
               <option value="invoice_sent">Invoice Sent</option>
-              <option value="completed">Completed</option>
             </select>
             <button class="btn btn-primary" onclick="batchCreateInvoices()">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
