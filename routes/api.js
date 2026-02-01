@@ -19,22 +19,33 @@ if (resend) {
 
 /**
  * Get draft orders (quotes)
- * Default: Last 30 OPEN quotes, newest first
+ * Default: OPEN quotes from last 30 days, newest first
  */
 router.get('/draft-orders', async (req, res, next) => {
   try {
-    const { status = 'open', limit = 30 } = req.query;
+    const { status = 'open', limit = 50, days = 30 } = req.query;
     
-    // Fetch ALL drafts from Shopify (up to 500)
+    // Fetch drafts from Shopify - always fetch open to get recent ones
     const result = await shopifyService.getDraftOrders({ status, limit: 500 });
     
     let draftOrders = result.draft_orders || [];
+    
+    // Filter to last X days (default 30)
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - parseInt(days));
+    
+    draftOrders = draftOrders.filter(order => {
+      const createdAt = new Date(order.created_at);
+      return createdAt >= cutoffDate;
+    });
     
     // Sort by created_at descending (NEWEST FIRST)
     draftOrders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     
     // Return only the requested limit
     const limitedOrders = draftOrders.slice(0, parseInt(limit));
+    
+    console.log(`[API] Returning ${limitedOrders.length} draft orders (status: ${status}, last ${days} days)`);
     
     res.json({
       success: true,
