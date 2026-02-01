@@ -409,7 +409,7 @@ function refreshData() {
 
 // Send Quote + Email
 async function sendQuoteEmail(draftOrderId) {
-  showToast('Generating invoice and email...', 'info');
+  showToast('Generating invoice and email preview...', 'info');
   
   try {
     const invoiceData = await api(`/draft-orders/${draftOrderId}/create-invoice`, {
@@ -419,6 +419,8 @@ async function sendQuoteEmail(draftOrderId) {
     
     const emailData = await api(`/draft-orders/${draftOrderId}/generate-email`, { method: 'POST' });
     window.currentEmailData = emailData;
+    window.currentDraftOrderId = draftOrderId;
+    window.currentInvoiceNumber = invoiceData.invoice.invoiceNumber;
     
     showModal('Send Quote Email', `
       <div style="margin-bottom: 16px;">
@@ -427,22 +429,59 @@ async function sendQuoteEmail(draftOrderId) {
       </div>
       <div style="margin-bottom: 16px;">
         <label style="font-weight: bold; display: block; margin-bottom: 8px;">Email Preview:</label>
-        <div id="email-preview" style="background: white; color: #333; padding: 20px; border-radius: 8px; max-height: 400px; overflow-y: auto; border: 1px solid #374151;">
-          ${emailData.body}
+        <div id="email-preview" style="background: white; color: #333; padding: 20px; border-radius: 8px; max-height: 300px; overflow-y: auto; border: 1px solid #374151;">
+          ${emailData.body.replace(/\n/g, '<br>')}
         </div>
         <input type="hidden" id="email-body-raw" value="${encodeURIComponent(emailData.body)}">
       </div>
+      <div style="background: #1e3a5f; padding: 12px; border-radius: 8px; margin-bottom: 16px;">
+        <p style="margin: 0; color: #93c5fd; font-size: 14px;">
+          📎 <strong>PDF Quote will be attached automatically</strong>
+        </p>
+      </div>
       <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-        <button class="btn btn-secondary" onclick="copyEmailToClipboard()">📋 Copy HTML</button>
-        <button class="btn btn-secondary" onclick="copyEmailAsText()">📝 Copy as Text</button>
-        <button class="btn btn-secondary" onclick="downloadInvoice('${invoiceData.invoice.invoiceNumber}')">📄 Download Invoice</button>
+        <button class="btn btn-secondary" onclick="copyEmailAsText()">📋 Copy Text</button>
+        <button class="btn btn-secondary" onclick="downloadInvoice('${invoiceData.invoice.invoiceNumber}')">📄 Download PDF</button>
       </div>
     `, [
       { text: 'Cancel', class: 'btn-secondary', onclick: 'closeModal()' },
-      { text: 'Open in Gmail', class: 'btn-primary', onclick: `openInGmail('${emailData.to}', '${encodeURIComponent(emailData.subject)}')` }
+      { text: 'Open Gmail (manual)', class: 'btn-secondary', onclick: `openInGmail('${emailData.to}', '${encodeURIComponent(emailData.subject)}')` },
+      { text: '📧 Send Now', class: 'btn-success', onclick: `sendEmailNow(${draftOrderId})` }
     ]);
   } catch (error) {
     showToast('Failed to generate email: ' + error.message, 'error');
+  }
+}
+
+// Actually send email via SendGrid with PDF attached
+async function sendEmailNow(draftOrderId) {
+  closeModal();
+  showToast('Sending email with PDF attachment...', 'info');
+  
+  try {
+    const result = await api(`/draft-orders/${draftOrderId}/send-email`, {
+      method: 'POST'
+    });
+    
+    showToast(`✅ Email sent to ${result.to}!`, 'success');
+    
+    // Show confirmation modal
+    showModal('Email Sent!', `
+      <div style="text-align: center; padding: 20px;">
+        <div style="font-size: 48px; margin-bottom: 16px;">✅</div>
+        <h3 style="margin-bottom: 8px;">Email Delivered Successfully</h3>
+        <p><strong>To:</strong> ${result.to}</p>
+        <p><strong>Subject:</strong> ${result.subject}</p>
+        <p style="color: #10b981; margin-top: 16px;">
+          📎 PDF Quote attached automatically
+        </p>
+      </div>
+    `, [
+      { text: 'Done', class: 'btn-primary', onclick: 'closeModal()' }
+    ]);
+    
+  } catch (error) {
+    showToast('Failed to send email: ' + error.message, 'error');
   }
 }
 
