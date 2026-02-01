@@ -280,23 +280,29 @@ router.post('/draft-orders/:id/generate-email', async (req, res, next) => {
             role: 'user',
             content: `Write a friendly, professional follow-up email for Phoenix Phase Converters.
 
-CUSTOMER: ${customerName}
+CUSTOMER NAME: ${customerName}
 ORDER NUMBER: ${orderName}
 TOTAL: $${totalPrice}
-PRODUCTS:
+
+EXACT PRODUCTS ORDERED (use these EXACT names, do NOT change or make up model numbers):
 ${productList}
 
 INVOICE LINK: ${invoiceUrl}
 
-Write a warm email that:
-1. Thanks them for their interest
-2. Mentions the specific product(s) they're interested in
-3. Highlights key benefits (American-made, 5-year warranty, free shipping, technical support)
-4. Includes the invoice link
-5. Offers to answer any questions
-6. Ends with a friendly sign-off from Glen
+CRITICAL RULES:
+- Use the EXACT product names shown above - do NOT change model numbers like GP10NL to GP15NL
+- Copy product names verbatim from the list above
+- Do NOT make up or guess product specifications
 
-Keep it concise (under 200 words). Don't include subject line. Just the email body.`
+Write a warm, concise email (under 150 words) that:
+1. Thanks them for their interest
+2. References the EXACT product name(s) from the list above
+3. Mentions key benefits: American-made, lifetime warranty, free shipping, 24/7 technical support
+4. Includes the invoice link if provided
+5. Offers to answer questions
+6. Signs off from Glen
+
+Just the email body, no subject line.`
           }]
         }, {
           headers: {
@@ -338,7 +344,7 @@ Thank you for your interest in Phoenix Phase Converters! I wanted to follow up o
 Your quote total is $${total}.
 
 Here are a few things that make Phoenix Phase Converters stand out:
-• American-made quality with a 5-year warranty
+• American-made quality with a LIFETIME WARRANTY
 • Free shipping to the contiguous USA
 • 24/7 technical support included
 • CNC and compressor compatible
