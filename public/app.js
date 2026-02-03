@@ -11,26 +11,25 @@ const state = {
   stats: {}
 };
 
-// Search for a specific quote by number
+// Search for a specific quote by number, name, or email
 async function searchQuote() {
   const searchInput = document.getElementById('quote-search');
   const searchTerm = searchInput.value.trim();
   
   if (!searchTerm) {
-    showToast('Enter a quote number to search', 'error');
+    showToast('Enter a quote #, customer name, or email', 'error');
     return;
   }
   
-  showToast(`Searching for quote ${searchTerm}...`, 'info');
+  showToast(`Searching for "${searchTerm}"...`, 'info');
   
   try {
     const data = await api(`/draft-orders/search?q=${encodeURIComponent(searchTerm)}`);
     
-    if (data.found && data.draftOrder) {
-      const found = data.draftOrder;
-      state.draftOrders = [found];
+    if (data.found && data.draftOrders && data.draftOrders.length > 0) {
+      state.draftOrders = data.draftOrders;
       const tbody = document.getElementById('quotes-table-body');
-      tbody.innerHTML = `
+      tbody.innerHTML = data.draftOrders.map(found => `
         <tr>
           <td><input type="checkbox" class="quote-checkbox" data-id="${found.id}" onchange="toggleQuoteSelection(${found.id})"></td>
           <td><strong>${found.name}</strong></td>
@@ -45,10 +44,10 @@ async function searchQuote() {
             <button class="btn btn-sm btn-secondary" onclick="viewQuoteDetails(${found.id})">View</button>
           </td>
         </tr>
-      `;
-      showToast(`Found quote ${found.name}!`, 'success');
+      `).join('');
+      showToast(`Found ${data.draftOrders.length} quote(s)!`, 'success');
     } else {
-      showToast(data.message || 'Quote not found', 'error');
+      showToast(data.message || 'No quotes found', 'error');
     }
   } catch (error) {
     showToast('Search failed: ' + error.message, 'error');
