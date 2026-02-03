@@ -101,38 +101,21 @@ class ShopifyService {
   }
 
   /**
-   * Get draft orders - fetches up to 500 (2 pages), returns newest first
+   * Get draft orders - fetches 30 most recent by ID (newest first)
    */
   async getDraftOrders(params = {}) {
     const status = params.status || 'open';
     console.log(`[Shopify] Fetching draft orders (status: ${status})...`);
     
-    let allDrafts = [];
-    let endpoint = `/draft_orders.json?limit=250${status !== 'any' ? `&status=${status}` : ''}`;
+    // Use order=id desc to get newest drafts (higher IDs = newer)
+    let endpoint = `/draft_orders.json?limit=30&order=id%20desc${status !== 'any' ? `&status=${status}` : ''}`;
     
-    // Page 1
-    console.log('[Shopify] Fetching page 1...');
-    const page1 = await this.requestWithHeaders('GET', endpoint);
-    allDrafts = page1.data.draft_orders || [];
-    console.log(`[Shopify] Page 1: ${allDrafts.length} drafts`);
+    console.log(`[Shopify] Endpoint: ${endpoint}`);
+    const result = await this.requestWithHeaders('GET', endpoint);
+    const drafts = result.data.draft_orders || [];
     
-    // Page 2 (if exists)
-    const nextUrl = this.getNextPageUrl(page1.headers.link);
-    if (nextUrl) {
-      console.log('[Shopify] Fetching page 2...');
-      const urlObj = new URL(nextUrl);
-      const page2Endpoint = urlObj.pathname.replace('/admin/api/2024-01', '') + urlObj.search;
-      const page2 = await this.requestWithHeaders('GET', page2Endpoint);
-      const page2Drafts = page2.data.draft_orders || [];
-      allDrafts = allDrafts.concat(page2Drafts);
-      console.log(`[Shopify] Page 2: ${page2Drafts.length} drafts, total: ${allDrafts.length}`);
-    }
-    
-    // Sort newest first
-    allDrafts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    
-    console.log(`[Shopify] Returning ${allDrafts.length} drafts (newest first)`);
-    return { draft_orders: allDrafts };
+    console.log(`[Shopify] Got ${drafts.length} drafts`);
+    return { draft_orders: drafts };
   }
 
   /**
