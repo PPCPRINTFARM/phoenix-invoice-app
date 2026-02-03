@@ -75,14 +75,14 @@ class ShopifyService {
   }
 
   /**
-   * Get draft orders - 50 most recent, largest ID first (D2257, D2256, D2255...)
+   * Get draft orders - 10 most recent, largest ID first (D2257, D2256...)
    */
   async getDraftOrders(params = {}) {
-    const status = params.status || 'open';
+    const status = params.status || 'invoice_sent';
     console.log(`[Shopify] Fetching draft orders (status: ${status})...`);
     
-    // LARGEST ID FIRST = newest quotes first
-    const endpoint = `/draft_orders.json?limit=50&order=id%20desc${status !== 'any' ? `&status=${status}` : ''}`;
+    // LARGEST ID FIRST = newest quotes first, limit 10
+    const endpoint = `/draft_orders.json?limit=10&order=id%20desc${status !== 'any' ? `&status=${status}` : ''}`;
     
     console.log(`[Shopify] Endpoint: ${endpoint}`);
     const result = await this.request('GET', endpoint);
