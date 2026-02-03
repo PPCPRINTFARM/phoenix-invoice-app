@@ -11,22 +11,38 @@ const path = require('path');
 
 /**
  * Get draft orders (quotes)
- * Default: Last 30 OPEN quotes, newest first
+ * Returns all drafts, newest first
  */
 router.get('/draft-orders', async (req, res, next) => {
   try {
-    const { status = 'open', limit = 30 } = req.query;
+    const { status = 'any', limit = 500 } = req.query;
+    
+    console.log(`[API] Fetching draft orders (status: ${status}, limit: ${limit})`);
     
     // Fetch ALL drafts from Shopify (up to 500)
     const result = await shopifyService.getDraftOrders({ status, limit: 500 });
     
     let draftOrders = result.draft_orders || [];
     
-    // Sort by created_at descending (NEWEST FIRST)
-    draftOrders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    console.log(`[API] Got ${draftOrders.length} drafts from Shopify`);
+    
+    // Sort by created_at descending (NEWEST FIRST) - force date comparison
+    draftOrders.sort((a, b) => {
+      const dateA = new Date(a.created_at).getTime();
+      const dateB = new Date(b.created_at).getTime();
+      return dateB - dateA;  // Newest first
+    });
+    
+    // Log first and last to verify sort
+    if (draftOrders.length > 0) {
+      console.log(`[API] First (newest): ${draftOrders[0].name} - ${draftOrders[0].created_at}`);
+      console.log(`[API] Last (oldest): ${draftOrders[draftOrders.length-1].name} - ${draftOrders[draftOrders.length-1].created_at}`);
+    }
     
     // Return only the requested limit
     const limitedOrders = draftOrders.slice(0, parseInt(limit));
+    
+    console.log(`[API] Returning ${limitedOrders.length} draft orders`);
     
     res.json({
       success: true,
