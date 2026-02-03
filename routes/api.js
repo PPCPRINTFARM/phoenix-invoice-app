@@ -24,7 +24,7 @@ router.get('/draft-orders/search', async (req, res, next) => {
     
     console.log(`[API] Searching for: ${searchTerm}...`);
     
-    // Fetch drafts and search by name, customer name, or email
+    // Fetch all drafts (same as list view)
     const result = await shopifyService.getDraftOrders({ status: 'any' });
     const drafts = result.draft_orders || [];
     
