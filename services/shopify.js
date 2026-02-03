@@ -12,18 +12,12 @@ class ShopifyService {
     this.clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
     this.baseUrl = `https://${this.storeUrl}/admin/api/2024-01`;
     
-    // Token cache
     this.accessToken = null;
     this.tokenExpiry = null;
-    
-    // Products cache (refresh every 5 minutes)
     this.productsCache = null;
     this.productsCacheExpiry = null;
   }
 
-  /**
-   * Get access token via OAuth Client Credentials flow
-   */
   async getAccessToken() {
     if (this.accessToken && this.tokenExpiry && Date.now() < this.tokenExpiry - 300000) {
       return this.accessToken;
@@ -53,10 +47,7 @@ class ShopifyService {
     }
   }
 
-  /**
-   * Make request with headers (for pagination)
-   */
-  async requestWithHeaders(method, endpoint, data = null, retry = true) {
+  async request(method, endpoint, data = null, retry = true) {
     try {
       const token = await this.getAccessToken();
       
@@ -70,12 +61,12 @@ class ShopifyService {
         ...(data && { data })
       });
       
-      return { data: response.data, headers: response.headers };
+      return response.data;
     } catch (error) {
       if (error.response?.status === 401 && retry) {
         console.log('[Shopify] Token expired, refreshing...');
         this.accessToken = null;
-        return this.requestWithHeaders(method, endpoint, data, false);
+        return this.request(method, endpoint, data, false);
       }
       
       console.error(`[Shopify] API Error [${endpoint}]:`, error.response?.data || error.message);
@@ -84,212 +75,39 @@ class ShopifyService {
   }
 
   /**
-   * Simple request (data only)
-   */
-  async request(method, endpoint, data = null) {
-    const result = await this.requestWithHeaders(method, endpoint, data);
-    return result.data;
-  }
-
-  /**
-   * Parse Link header for next page
-   */
-  getNextPageUrl(linkHeader) {
-    if (!linkHeader) return null;
-    const match = linkHeader.match(/<([^>]+)>;\s*rel="next"/);
-    return match ? match[1] : null;
-  }
-
-  /**
-   * Get draft orders - fetches up to 500 (2 pages), returns newest first
+   * Get draft orders - 50 most recent, largest ID first (D2257, D2256, D2255...)
    */
   async getDraftOrders(params = {}) {
     const status = params.status || 'open';
     console.log(`[Shopify] Fetching draft orders (status: ${status})...`);
     
-    let allDrafts = [];
-    let endpoint = `/draft_orders.json?limit=250${status !== 'any' ? `&status=${status}` : ''}`;
+    // LARGEST ID FIRST = newest quotes first
+    const endpoint = `/draft_orders.json?limit=50&order=id%20desc${status !== 'any' ? `&status=${status}` : ''}`;
     
-    // Page 1
-    console.log('[Shopify] Fetching page 1...');
-    const page1 = await this.requestWithHeaders('GET', endpoint);
-    allDrafts = page1.data.draft_orders || [];
-    console.log(`[Shopify] Page 1: ${allDrafts.length} drafts`);
+    console.log(`[Shopify] Endpoint: ${endpoint}`);
+    const result = await this.request('GET', endpoint);
+    const drafts = result.draft_orders || [];
     
-    // Page 2 (if exists)
-    const nextUrl = this.getNextPageUrl(page1.headers.link);
-    if (nextUrl) {
-      console.log('[Shopify] Fetching page 2...');
-      const urlObj = new URL(nextUrl);
-      const page2Endpoint = urlObj.pathname.replace('/admin/api/2024-01', '') + urlObj.search;
-      const page2 = await this.requestWithHeaders('GET', page2Endpoint);
-      const page2Drafts = page2.data.draft_orders || [];
-      allDrafts = allDrafts.concat(page2Drafts);
-      console.log(`[Shopify] Page 2: ${page2Drafts.length} drafts, total: ${allDrafts.length}`);
-    }
-    
-    // Sort newest first
-    allDrafts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    
-    console.log(`[Shopify] Returning ${allDrafts.length} drafts (newest first)`);
-    return { draft_orders: allDrafts };
+    console.log(`[Shopify] Got ${drafts.length} drafts`);
+    return { draft_orders: drafts };
   }
 
-  /**
-   * Get single draft order
-   */
   async getDraftOrder(id) {
     return this.request('GET', `/draft_orders/${id}.json`);
   }
 
-  /**
-   * Search for a draft order by name (e.g. #D2257)
-   */
-  async searchDraftByName(name) {
-    console.log(`[Shopify] Searching for draft order: ${name}`);
-    
-    // Shopify doesn't have direct name search, so we use the GraphQL API
-    const query = `
-      {
-        draftOrders(first: 1, query: "name:${name}") {
-          edges {
-            node {
-              id
-              legacyResourceId
-              name
-              email
-              totalPrice
-              createdAt
-              status
-              customer {
-                firstName
-                lastName
-                email
-                phone
-              }
-              lineItems(first: 50) {
-                edges {
-                  node {
-                    title
-                    quantity
-                    originalUnitPrice
-                    product {
-                      id
-                    }
-                  }
-                }
-              }
-              shippingAddress {
-                firstName
-                lastName
-                address1
-                address2
-                city
-                province
-                zip
-                country
-                phone
-              }
-              billingAddress {
-                firstName
-                lastName
-                address1
-                city
-                province
-                zip
-              }
-              subtotalPrice
-              totalTax
-              totalPrice
-              invoiceUrl
-              note2: note
-            }
-          }
-        }
-      }
-    `;
-    
-    try {
-      const token = await this.getAccessToken();
-      const response = await require('axios').post(
-        `https://${this.storeUrl}/admin/api/2024-01/graphql.json`,
-        { query },
-        {
-          headers: {
-            'X-Shopify-Access-Token': token,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-      
-      const edges = response.data?.data?.draftOrders?.edges;
-      if (edges && edges.length > 0) {
-        const node = edges[0].node;
-        
-        // Convert GraphQL response to REST format
-        const draftOrder = {
-          id: parseInt(node.legacyResourceId),
-          name: node.name,
-          email: node.email || node.customer?.email,
-          total_price: node.totalPrice,
-          created_at: node.createdAt,
-          status: node.status.toLowerCase(),
-          customer: node.customer ? {
-            first_name: node.customer.firstName,
-            last_name: node.customer.lastName,
-            email: node.customer.email,
-            phone: node.customer.phone
-          } : null,
-          line_items: node.lineItems.edges.map(e => ({
-            title: e.node.title,
-            quantity: e.node.quantity,
-            price: e.node.originalUnitPrice,
-            product_id: e.node.product?.id ? parseInt(e.node.product.id.split('/').pop()) : null
-          })),
-          shipping_address: node.shippingAddress,
-          billing_address: node.billingAddress,
-          subtotal_price: node.subtotalPrice,
-          total_tax: node.totalTax,
-          invoice_url: node.invoiceUrl,
-          note: node.note2
-        };
-        
-        console.log(`[Shopify] Found draft order: ${node.name}`);
-        return { draft_order: draftOrder };
-      }
-      
-      console.log(`[Shopify] Draft order not found: ${name}`);
-      return null;
-    } catch (error) {
-      console.error(`[Shopify] Search error:`, error.response?.data || error.message);
-      return null;
-    }
-  }
-
-  /**
-   * Create draft order
-   */
   async createDraftOrder(data) {
     return this.request('POST', '/draft_orders.json', { draft_order: data });
   }
 
-  /**
-   * Update draft order
-   */
   async updateDraftOrder(id, data) {
     return this.request('PUT', `/draft_orders/${id}.json`, { draft_order: data });
   }
 
-  /**
-   * Complete draft order
-   */
   async completeDraftOrder(id, paymentPending = true) {
     return this.request('PUT', `/draft_orders/${id}/complete.json?payment_pending=${paymentPending}`);
   }
 
-  /**
-   * Send invoice for draft order
-   */
   async sendDraftOrderInvoice(id, invoiceData = {}) {
     return this.request('POST', `/draft_orders/${id}/send_invoice.json`, {
       draft_order_invoice: {
@@ -302,9 +120,6 @@ class ShopifyService {
     });
   }
 
-  /**
-   * Get orders
-   */
   async getOrders(params = {}) {
     const queryParams = new URLSearchParams({
       limit: params.limit || 50,
@@ -313,77 +128,34 @@ class ShopifyService {
     return this.request('GET', `/orders.json?${queryParams}`);
   }
 
-  /**
-   * Get single order
-   */
   async getOrder(id) {
     return this.request('GET', `/orders/${id}.json`);
   }
 
-  /**
-   * Get customer
-   */
   async getCustomer(id) {
     return this.request('GET', `/customers/${id}.json`);
   }
 
-  /**
-   * Search customers
-   */
   async searchCustomers(query) {
     return this.request('GET', `/customers/search.json?query=${encodeURIComponent(query)}`);
   }
 
-  /**
-   * Get products - fetches up to 500 (2 pages), cached 5 min
-   */
   async getProducts(params = {}) {
-    console.log('[Shopify] Fetching products...');
-    
-    // Return cache if valid
     if (this.productsCache && this.productsCacheExpiry && Date.now() < this.productsCacheExpiry) {
-      console.log(`[Shopify] Returning ${this.productsCache.length} cached products`);
       return { products: this.productsCache };
     }
     
-    let allProducts = [];
-    
-    // Page 1
-    console.log('[Shopify] Fetching products page 1...');
-    const page1 = await this.requestWithHeaders('GET', '/products.json?limit=250');
-    allProducts = page1.data.products || [];
-    console.log(`[Shopify] Page 1: ${allProducts.length} products`);
-    
-    // Page 2 (if exists)
-    const nextUrl = this.getNextPageUrl(page1.headers.link);
-    if (nextUrl) {
-      console.log('[Shopify] Fetching products page 2...');
-      const urlObj = new URL(nextUrl);
-      const page2Endpoint = urlObj.pathname.replace('/admin/api/2024-01', '') + urlObj.search;
-      const page2 = await this.requestWithHeaders('GET', page2Endpoint);
-      const page2Products = page2.data.products || [];
-      allProducts = allProducts.concat(page2Products);
-      console.log(`[Shopify] Page 2: ${page2Products.length} products, total: ${allProducts.length}`);
-    }
-    
-    // Cache for 5 minutes
-    this.productsCache = allProducts;
+    const result = await this.request('GET', '/products.json?limit=250');
+    this.productsCache = result.products || [];
     this.productsCacheExpiry = Date.now() + (5 * 60 * 1000);
     
-    console.log(`[Shopify] Returning ${allProducts.length} products`);
-    return { products: allProducts };
+    return { products: this.productsCache };
   }
 
-  /**
-   * Get single product
-   */
   async getProduct(id) {
     return this.request('GET', `/products/${id}.json`);
   }
 
-  /**
-   * Create order metafield
-   */
   async createOrderMetafield(orderId, data) {
     return this.request('POST', `/orders/${orderId}/metafields.json`, {
       metafield: {
@@ -395,9 +167,6 @@ class ShopifyService {
     });
   }
 
-  /**
-   * Register webhooks
-   */
   async registerWebhooks() {
     const topics = ['draft_orders/create', 'draft_orders/update', 'orders/create', 'orders/paid'];
     const appUrl = process.env.APP_URL;
@@ -408,7 +177,6 @@ class ShopifyService {
 
     for (const topic of topics) {
       if (existingTopics.includes(topic)) {
-        console.log(`[Shopify] Webhook exists: ${topic}`);
         results.push({ topic, status: 'exists' });
         continue;
       }
@@ -417,7 +185,6 @@ class ShopifyService {
         const result = await this.request('POST', '/webhooks.json', {
           webhook: { topic, address: `${appUrl}/webhooks/${topic.replace('/', '-')}`, format: 'json' }
         });
-        console.log(`[Shopify] Webhook registered: ${topic}`);
         results.push({ topic, status: 'created', id: result.webhook?.id });
       } catch (error) {
         results.push({ topic, status: 'error', error: error.message });
@@ -432,13 +199,6 @@ class ShopifyService {
 
   async deleteWebhook(id) {
     return this.request('DELETE', `/webhooks/${id}.json`);
-  }
-
-  verifyWebhookSignature(body, hmacHeader) {
-    const crypto = require('crypto');
-    const hash = crypto.createHmac('sha256', process.env.SHOPIFY_CLIENT_SECRET)
-      .update(body, 'utf8').digest('base64');
-    return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(hmacHeader || ''));
   }
 }
 
