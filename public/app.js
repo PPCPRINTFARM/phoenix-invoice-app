@@ -129,43 +129,93 @@ async function loadStats() {
   }
 }
 
+// Pagination state
+let currentPage = 1;
+const perPage = 50;
+
 async function loadDraftOrders() {
   const tbody = document.getElementById('quotes-table-body');
-  tbody.innerHTML = '<tr><td colspan="8" class="loading">Loading quotes...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8" class="loading">Loading all quotes...</td></tr>';
   
   try {
     const status = document.getElementById('quote-status-filter').value;
     const data = await api(`/draft-orders?status=${status}`);
     
-    const sortedOrders = data.draftOrders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    
-    state.draftOrders = sortedOrders;
+    state.draftOrders = data.draftOrders || [];
     state.selectedQuotes.clear();
+    currentPage = 1;
     
-    if (sortedOrders.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" class="loading">No draft orders found</td></tr>';
-      return;
-    }
-    
-    tbody.innerHTML = sortedOrders.map(order => `
-      <tr>
-        <td><input type="checkbox" class="quote-checkbox" data-id="${order.id}" onchange="toggleQuoteSelection(${order.id})"></td>
-        <td><strong>${order.name}</strong></td>
-        <td>${getCustomerName(order)}</td>
-        <td>${order.email || order.customer?.email || '-'}</td>
-        <td>${formatCurrency(order.total_price)}</td>
-        <td>${formatDate(order.created_at)}</td>
-        <td><span class="status-badge ${order.status}">${order.status}</span></td>
-        <td>
-          <button class="btn btn-sm btn-success" onclick="sendQuoteEmail(${order.id})" title="Generate invoice + email">Send</button>
-          <button class="btn btn-sm btn-primary" onclick="createInvoice(${order.id})">Invoice</button>
-          <button class="btn btn-sm btn-secondary" onclick="viewQuoteDetails(${order.id})">View</button>
-        </td>
-      </tr>
-    `).join('');
+    renderQuotesPage();
   } catch (error) {
     tbody.innerHTML = '<tr><td colspan="8" class="loading">Failed to load quotes</td></tr>';
   }
+}
+
+function renderQuotesPage() {
+  const tbody = document.getElementById('quotes-table-body');
+  const totalQuotes = state.draftOrders.length;
+  const totalPages = Math.ceil(totalQuotes / perPage);
+  const start = (currentPage - 1) * perPage;
+  const end = start + perPage;
+  const pageQuotes = state.draftOrders.slice(start, end);
+  
+  if (totalQuotes === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="loading">No draft orders found</td></tr>';
+    document.getElementById('pagination-container').innerHTML = '';
+    return;
+  }
+  
+  tbody.innerHTML = pageQuotes.map(order => `
+    <tr>
+      <td><input type="checkbox" class="quote-checkbox" data-id="${order.id}" onchange="toggleQuoteSelection(${order.id})"></td>
+      <td><strong>${order.name}</strong></td>
+      <td>${getCustomerName(order)}</td>
+      <td>${order.email || order.customer?.email || '-'}</td>
+      <td>${formatCurrency(order.total_price)}</td>
+      <td>${formatDate(order.created_at)}</td>
+      <td><span class="status-badge ${order.status}">${order.status}</span></td>
+      <td>
+        <button class="btn btn-sm btn-success" onclick="sendQuoteEmail(${order.id})" title="Generate invoice + email">Send</button>
+        <button class="btn btn-sm btn-primary" onclick="createInvoice(${order.id})">Invoice</button>
+        <button class="btn btn-sm btn-secondary" onclick="viewQuoteDetails(${order.id})">View</button>
+      </td>
+    </tr>
+  `).join('');
+  
+  // Render pagination
+  let paginationHtml = `<div style="display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 20px; flex-wrap: wrap;">`;
+  paginationHtml += `<span style="color: #9ca3af;">Showing ${start + 1}-${Math.min(end, totalQuotes)} of ${totalQuotes} quotes</span>`;
+  paginationHtml += `<button class="btn btn-sm btn-secondary" onclick="goToPage(1)" ${currentPage === 1 ? 'disabled' : ''}>« First</button>`;
+  paginationHtml += `<button class="btn btn-sm btn-secondary" onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>‹ Prev</button>`;
+  
+  // Page numbers
+  for (let i = Math.max(1, currentPage - 2); i <= Math.min(totalPages, currentPage + 2); i++) {
+    if (i === currentPage) {
+      paginationHtml += `<button class="btn btn-sm btn-primary">${i}</button>`;
+    } else {
+      paginationHtml += `<button class="btn btn-sm btn-secondary" onclick="goToPage(${i})">${i}</button>`;
+    }
+  }
+  
+  paginationHtml += `<button class="btn btn-sm btn-secondary" onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}">Next ›</button>`;
+  paginationHtml += `<button class="btn btn-sm btn-secondary" onclick="goToPage(${totalPages})" ${currentPage === totalPages ? 'disabled' : ''}">Last »</button>`;
+  paginationHtml += `</div>`;
+  
+  let paginationContainer = document.getElementById('pagination-container');
+  if (!paginationContainer) {
+    paginationContainer = document.createElement('div');
+    paginationContainer.id = 'pagination-container';
+    document.querySelector('#quotes-section .table-container').appendChild(paginationContainer);
+  }
+  paginationContainer.innerHTML = paginationHtml;
+}
+
+function goToPage(page) {
+  const totalPages = Math.ceil(state.draftOrders.length / perPage);
+  if (page < 1 || page > totalPages) return;
+  currentPage = page;
+  renderQuotesPage();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 async function loadInvoices() {
