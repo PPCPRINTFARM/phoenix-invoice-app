@@ -10,12 +10,46 @@ const invoiceService = require('../services/invoice');
 const path = require('path');
 
 /**
+ * Get recent draft orders (last 50, newest first)
+ * Simple endpoint that just gets recent drafts
+ */
+router.get('/draft-orders/recent', async (req, res, next) => {
+  try {
+    const { limit = 50 } = req.query;
+    
+    console.log(`[API] Fetching recent ${limit} draft orders...`);
+    
+    // Fetch recent drafts directly from Shopify with order param
+    const result = await shopifyService.getRecentDraftOrders(parseInt(limit));
+    
+    res.json({
+      success: true,
+      count: result.draft_orders.length,
+      draftOrders: result.draft_orders
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * Get draft orders (quotes)
  * Returns all drafts, newest first
  */
 router.get('/draft-orders', async (req, res, next) => {
   try {
-    const { status = 'any', limit = 500 } = req.query;
+    const { status = 'any', limit = 500, recent } = req.query;
+    
+    // If recent=true, use the simple recent endpoint logic
+    if (recent === 'true') {
+      console.log(`[API] Fetching recent ${limit} draft orders...`);
+      const result = await shopifyService.getRecentDraftOrders(parseInt(limit));
+      return res.json({
+        success: true,
+        count: result.draft_orders.length,
+        draftOrders: result.draft_orders
+      });
+    }
     
     console.log(`[API] Fetching draft orders (status: ${status}, limit: ${limit})`);
     
