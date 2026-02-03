@@ -108,7 +108,8 @@ class ShopifyService {
     console.log(`[Shopify] Fetching draft orders (status: ${status})...`);
     
     let allDrafts = [];
-    let endpoint = `/draft_orders.json?limit=250${status !== 'any' ? `&status=${status}` : ''}`;
+    // Request newest first with order=created_at desc
+    let endpoint = `/draft_orders.json?limit=250&order=created_at%20desc${status !== 'any' ? `&status=${status}` : ''}`;
     
     // Page 1
     console.log('[Shopify] Fetching page 1...');
