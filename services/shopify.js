@@ -1,6 +1,5 @@
 /**
  * Shopify API Service
- * Handles all Shopify API interactions using OAuth Client Credentials
  */
 
 const axios = require('axios');
@@ -64,7 +63,6 @@ class ShopifyService {
       return response.data;
     } catch (error) {
       if (error.response?.status === 401 && retry) {
-        console.log('[Shopify] Token expired, refreshing...');
         this.accessToken = null;
         return this.request(method, endpoint, data, false);
       }
@@ -74,22 +72,65 @@ class ShopifyService {
     }
   }
 
+  async requestWithHeaders(method, endpoint, data = null, retry = true) {
+    try {
+      const token = await this.getAccessToken();
+      
+      const response = await axios({
+        method,
+        url: `${this.baseUrl}${endpoint}`,
+        headers: {
+          'X-Shopify-Access-Token': token,
+          'Content-Type': 'application/json'
+        },
+        ...(data && { data })
+      });
+      
+      return { data: response.data, headers: response.headers };
+    } catch (error) {
+      if (error.response?.status === 401 && retry) {
+        this.accessToken = null;
+        return this.requestWithHeaders(method, endpoint, data, false);
+      }
+      
+      throw new Error(error.response?.data?.errors || error.message);
+    }
+  }
+
   /**
-   * Get draft orders - 10 most recent, largest ID first (D2257, D2256...)
+   * Get ALL draft orders - up to 2000 (8 pages), newest ID first
    */
   async getDraftOrders(params = {}) {
-    const status = params.status || 'invoice_sent';
-    console.log(`[Shopify] Fetching draft orders (status: ${status})...`);
+    const status = params.status || 'any';
+    console.log(`[Shopify] Fetching ALL draft orders (status: ${status})...`);
     
-    // LARGEST ID FIRST = newest quotes first, limit 10
-    const endpoint = `/draft_orders.json?limit=10&order=id%20desc${status !== 'any' ? `&status=${status}` : ''}`;
+    let allDrafts = [];
+    let url = `/draft_orders.json?limit=250&order=id%20desc${status !== 'any' ? `&status=${status}` : ''}`;
+    let page = 1;
     
-    console.log(`[Shopify] Endpoint: ${endpoint}`);
-    const result = await this.request('GET', endpoint);
-    const drafts = result.draft_orders || [];
+    while (url && page <= 8) {
+      console.log(`[Shopify] Fetching page ${page}...`);
+      const response = await this.requestWithHeaders('GET', url);
+      const drafts = response.data.draft_orders || [];
+      
+      if (drafts.length === 0) break;
+      
+      allDrafts = allDrafts.concat(drafts);
+      console.log(`[Shopify] Page ${page}: ${drafts.length} drafts, total: ${allDrafts.length}`);
+      
+      // Get next page from Link header
+      const linkHeader = response.headers?.link || '';
+      const nextMatch = linkHeader.match(/<([^>]+)>;\s*rel="next"/);
+      if (nextMatch) {
+        url = nextMatch[1].replace(this.baseUrl, '');
+      } else {
+        url = null;
+      }
+      page++;
+    }
     
-    console.log(`[Shopify] Got ${drafts.length} drafts`);
-    return { draft_orders: drafts };
+    console.log(`[Shopify] Total: ${allDrafts.length} drafts`);
+    return { draft_orders: allDrafts };
   }
 
   async getDraftOrder(id) {
