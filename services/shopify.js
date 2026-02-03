@@ -101,39 +101,20 @@ class ShopifyService {
   }
 
   /**
-   * Get recent draft orders - simple fetch, newest first (no pagination)
-   */
-  async getRecentDraftOrders(limit = 50) {
-    console.log(`[Shopify] Fetching ${limit} most recent draft orders...`);
-    
-    // Use updated_at desc to get the most recently modified/created
-    const endpoint = `/draft_orders.json?limit=${limit}&order=updated_at%20desc`;
-    
-    const result = await this.requestWithHeaders('GET', endpoint);
-    const drafts = result.data.draft_orders || [];
-    
-    console.log(`[Shopify] Got ${drafts.length} recent drafts`);
-    
-    return { draft_orders: drafts };
-  }
-
-  /**
-   * Get draft orders - fetches last 30, newest first (by updated_at)
+   * Get draft orders - fetches 30 most recent, newest first
    */
   async getDraftOrders(params = {}) {
     const status = params.status || 'open';
-    const limit = params.limit || 30;
-    console.log(`[Shopify] Fetching ${limit} draft orders (status: ${status})...`);
+    console.log(`[Shopify] Fetching draft orders (status: ${status})...`);
     
-    // Simple single request - no pagination needed for 30 drafts
-    let endpoint = `/draft_orders.json?limit=${limit}&order=updated_at%20desc${status !== 'any' ? `&status=${status}` : ''}`;
+    // Fetch 30 most recent drafts, sorted by updated_at descending
+    let endpoint = `/draft_orders.json?limit=30&order=updated_at%20desc${status !== 'any' ? `&status=${status}` : ''}`;
     
     console.log(`[Shopify] Endpoint: ${endpoint}`);
     const result = await this.requestWithHeaders('GET', endpoint);
     const drafts = result.data.draft_orders || [];
     
-    console.log(`[Shopify] Got ${drafts.length} drafts (newest first by updated_at)`);
-    
+    console.log(`[Shopify] Got ${drafts.length} drafts`);
     return { draft_orders: drafts };
   }
 
