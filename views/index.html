@@ -308,7 +308,8 @@
           <h2>Draft Quotes</h2>
           <div class="section-actions">
             <select id="quote-status-filter" onchange="loadDraftOrders()">
-              <option value="open" selected>Open</option>
+              <option value="any" selected>All Drafts</option>
+              <option value="open">Open</option>
               <option value="invoice_sent">Invoice Sent</option>
             </select>
             <button class="btn btn-primary" onclick="batchCreateInvoices()">
