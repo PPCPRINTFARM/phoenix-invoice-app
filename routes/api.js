@@ -10,6 +10,49 @@ const invoiceService = require('../services/invoice');
 const path = require('path');
 
 /**
+ * Search for a draft order by quote number (e.g. D2257)
+ */
+router.get('/draft-orders/search', async (req, res, next) => {
+  try {
+    const { q } = req.query;
+    
+    if (!q) {
+      return res.status(400).json({ success: false, error: 'Search query (q) required' });
+    }
+    
+    // Extract number from input (handles "2257", "D2257", "#D2257")
+    const num = q.replace(/[^0-9]/g, '');
+    const searchName = `#D${num}`;
+    
+    console.log(`[API] Searching for draft order ${searchName}...`);
+    
+    // Fetch drafts and find by name
+    const result = await shopifyService.getDraftOrders({ status: 'any' });
+    const drafts = result.draft_orders || [];
+    
+    const found = drafts.find(d => d.name === searchName);
+    
+    if (found) {
+      console.log(`[API] Found: ${found.name}`);
+      res.json({
+        success: true,
+        found: true,
+        draftOrder: found
+      });
+    } else {
+      console.log(`[API] Not found: ${searchName}`);
+      res.json({
+        success: true,
+        found: false,
+        message: `Quote ${searchName} not found in last 50 drafts`
+      });
+    }
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * Get draft orders (quotes)
  * Default: Last 30 OPEN quotes, newest first
  */
