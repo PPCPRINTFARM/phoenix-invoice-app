@@ -11,6 +11,59 @@ const state = {
   stats: {}
 };
 
+// Search for a specific quote by number
+async function searchQuote() {
+  const searchInput = document.getElementById('quote-search');
+  const searchTerm = searchInput.value.trim().toUpperCase();
+  
+  if (!searchTerm) {
+    showToast('Enter a quote number to search', 'error');
+    return;
+  }
+  
+  // Extract just the number if they typed #D2257 or D2257
+  const quoteNum = searchTerm.replace('#', '').replace('D', '');
+  
+  showToast(`Searching for quote #D${quoteNum}...`, 'info');
+  
+  try {
+    // Search in Shopify by fetching and filtering
+    const data = await api(`/draft-orders?status=any`);
+    
+    const found = data.draftOrders.find(order => 
+      order.name.toUpperCase().includes(quoteNum) || 
+      order.name.toUpperCase() === `#D${quoteNum}`
+    );
+    
+    if (found) {
+      // Show just this one quote
+      state.draftOrders = [found];
+      const tbody = document.getElementById('quotes-table-body');
+      tbody.innerHTML = `
+        <tr>
+          <td><input type="checkbox" class="quote-checkbox" data-id="${found.id}" onchange="toggleQuoteSelection(${found.id})"></td>
+          <td><strong>${found.name}</strong></td>
+          <td>${getCustomerName(found)}</td>
+          <td>${found.email || found.customer?.email || '-'}</td>
+          <td>${formatCurrency(found.total_price)}</td>
+          <td>${formatDate(found.created_at)}</td>
+          <td><span class="status-badge ${found.status}">${found.status}</span></td>
+          <td>
+            <button class="btn btn-sm btn-success" onclick="sendQuoteEmail(${found.id})" title="Generate invoice + email">Send</button>
+            <button class="btn btn-sm btn-primary" onclick="createInvoice(${found.id})">Invoice</button>
+            <button class="btn btn-sm btn-secondary" onclick="viewQuoteDetails(${found.id})">View</button>
+          </td>
+        </tr>
+      `;
+      showToast(`Found quote ${found.name}!`, 'success');
+    } else {
+      showToast(`Quote #D${quoteNum} not found`, 'error');
+    }
+  } catch (error) {
+    showToast('Search failed: ' + error.message, 'error');
+  }
+}
+
 // API helper
 async function api(endpoint, options = {}) {
   try {
