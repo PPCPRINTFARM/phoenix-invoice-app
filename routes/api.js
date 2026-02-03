@@ -8,44 +8,25 @@ const router = express.Router();
 const shopifyService = require('../services/shopify');
 const invoiceService = require('../services/invoice');
 const path = require('path');
-const fs = require('fs');
-const { Resend } = require('resend');
-
-// Initialize Resend
-const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
-if (resend) {
-  console.log('[Resend] Email service initialized');
-}
 
 /**
  * Get draft orders (quotes)
- * Default: OPEN quotes from last 30 days, newest first
+ * Default: Last 30 OPEN quotes, newest first
  */
 router.get('/draft-orders', async (req, res, next) => {
   try {
-    const { status = 'open', limit = 50, days = 30 } = req.query;
+    const { status = 'open', limit = 30 } = req.query;
     
-    // Fetch drafts from Shopify - always fetch open to get recent ones
+    // Fetch ALL drafts from Shopify (up to 500)
     const result = await shopifyService.getDraftOrders({ status, limit: 500 });
     
     let draftOrders = result.draft_orders || [];
-    
-    // Filter to last X days (default 30)
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - parseInt(days));
-    
-    draftOrders = draftOrders.filter(order => {
-      const createdAt = new Date(order.created_at);
-      return createdAt >= cutoffDate;
-    });
     
     // Sort by created_at descending (NEWEST FIRST)
     draftOrders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     
     // Return only the requested limit
     const limitedOrders = draftOrders.slice(0, parseInt(limit));
-    
-    console.log(`[API] Returning ${limitedOrders.length} draft orders (status: ${status}, last ${days} days)`);
     
     res.json({
       success: true,
@@ -299,29 +280,23 @@ router.post('/draft-orders/:id/generate-email', async (req, res, next) => {
             role: 'user',
             content: `Write a friendly, professional follow-up email for Phoenix Phase Converters.
 
-CUSTOMER NAME: ${customerName}
+CUSTOMER: ${customerName}
 ORDER NUMBER: ${orderName}
 TOTAL: $${totalPrice}
-
-EXACT PRODUCTS ORDERED (use these EXACT names, do NOT change or make up model numbers):
+PRODUCTS:
 ${productList}
 
 INVOICE LINK: ${invoiceUrl}
 
-CRITICAL RULES:
-- Use the EXACT product names shown above - do NOT change model numbers like GP10NL to GP15NL
-- Copy product names verbatim from the list above
-- Do NOT make up or guess product specifications
-
-Write a warm, concise email (under 150 words) that:
+Write a warm email that:
 1. Thanks them for their interest
-2. References the EXACT product name(s) from the list above
-3. Mentions key benefits: American-made, lifetime warranty, free shipping, 24/7 technical support
-4. Includes the invoice link if provided
-5. Offers to answer questions
-6. Signs off from Glen
+2. Mentions the specific product(s) they're interested in
+3. Highlights key benefits (American-made, 5-year warranty, free shipping, technical support)
+4. Includes the invoice link
+5. Offers to answer any questions
+6. Ends with a friendly sign-off from Glen
 
-Just the email body, no subject line.`
+Keep it concise (under 200 words). Don't include subject line. Just the email body.`
           }]
         }, {
           headers: {
@@ -363,7 +338,7 @@ Thank you for your interest in Phoenix Phase Converters! I wanted to follow up o
 Your quote total is $${total}.
 
 Here are a few things that make Phoenix Phase Converters stand out:
-• American-made quality with a LIFETIME WARRANTY
+• American-made quality with a 5-year warranty
 • Free shipping to the contiguous USA
 • 24/7 technical support included
 • CNC and compressor compatible
@@ -380,175 +355,6 @@ Phoenix Phase Converters
 1-800-417-6568
 support@phoenixphaseconverters.com`;
 }
-
-/**
- * Send quote email with PDF attachment via Resend
- */
-router.post('/draft-orders/:id/send-email', async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    
-    console.log(`[Resend] Starting email send for draft order ${id}`);
-    
-    // Check Resend is configured
-    if (!resend) {
-      return res.status(500).json({
-        success: false,
-        error: 'Resend not configured. Add RESEND_API_KEY to environment variables.'
-      });
-    }
-    
-    // Get draft order
-    const draftResult = await shopifyService.getDraftOrder(id);
-    const draftOrder = draftResult.draft_order;
-
-    if (!draftOrder) {
-      return res.status(404).json({ success: false, error: 'Draft order not found' });
-    }
-
-    const customerEmail = draftOrder.customer?.email || draftOrder.email;
-    if (!customerEmail) {
-      return res.status(400).json({ success: false, error: 'No customer email found' });
-    }
-
-    const customerName = draftOrder.customer?.first_name 
-      ? `${draftOrder.customer.first_name} ${draftOrder.customer.last_name || ''}`.trim()
-      : draftOrder.billing_address?.name || 'Valued Customer';
-    
-    const orderName = draftOrder.name || `#${draftOrder.id}`;
-    const totalPrice = parseFloat(draftOrder.total_price || 0).toFixed(2);
-    const invoiceUrl = draftOrder.invoice_url || '';
-    
-    // Get product details
-    const products = (draftOrder.line_items || []).map(item => ({
-      name: item.title,
-      quantity: item.quantity,
-      price: parseFloat(item.price).toFixed(2)
-    }));
-    
-    const productList = products.map(p => `- ${p.name} (Qty: ${p.quantity}) - $${p.price}`).join('\n');
-
-    // Step 1: Generate PDF Invoice
-    console.log('[Resend] Generating PDF invoice...');
-    const invoiceData = invoiceService.draftOrderToInvoice(draftOrder);
-    
-    // Fetch product images for PDF
-    for (const item of invoiceData.lineItems) {
-      if (!item.image && item.productId) {
-        try {
-          const productResult = await shopifyService.getProduct(item.productId);
-          if (productResult.product?.image?.src) {
-            item.image = productResult.product.image.src;
-          }
-        } catch (err) { /* ignore */ }
-      }
-    }
-    
-    const pdfResult = await invoiceService.generatePDF(invoiceData);
-    console.log(`[Resend] PDF generated: ${pdfResult.filename}`);
-
-    // Step 2: Generate AI Email Body
-    console.log('[Resend] Generating email content...');
-    let emailBody = '';
-    const subject = `Your Phoenix Phase Converter Quote ${orderName}`;
-    
-    const anthropicKey = process.env.ANTHROPIC_API_KEY;
-    if (anthropicKey) {
-      try {
-        const axios = require('axios');
-        const response = await axios.post('https://api.anthropic.com/v1/messages', {
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 800,
-          messages: [{
-            role: 'user',
-            content: `Write a friendly, professional follow-up email for Phoenix Phase Converters.
-
-CUSTOMER NAME: ${customerName}
-ORDER NUMBER: ${orderName}
-TOTAL: $${totalPrice}
-
-EXACT PRODUCTS ORDERED (use these EXACT names, do NOT change or make up model numbers):
-${productList}
-
-INVOICE LINK: ${invoiceUrl}
-
-CRITICAL RULES:
-- Use the EXACT product names shown above - do NOT change model numbers like GP10NL to GP15NL
-- Copy product names verbatim from the list above
-- Do NOT make up or guess product specifications
-
-Write a warm, concise email (under 150 words) that:
-1. Thanks them for their interest
-2. References the EXACT product name(s) from the list above
-3. Mentions key benefits: American-made, lifetime warranty, free shipping, 24/7 technical support
-4. Mentions the PDF quote is attached
-5. Offers to answer questions
-6. Signs off from Glen
-
-Just the email body, no subject line.`
-          }]
-        }, {
-          headers: {
-            'x-api-key': anthropicKey,
-            'anthropic-version': '2023-06-01',
-            'Content-Type': 'application/json'
-          }
-        });
-        
-        emailBody = response.data.content[0].text;
-      } catch (aiError) {
-        console.log('[Resend] Claude API error, using template:', aiError.message);
-        emailBody = generateTemplateEmail(customerName, orderName, totalPrice, products, invoiceUrl);
-        emailBody = emailBody.replace('You can view and pay your invoice here:', 'Your quote PDF is attached. You can also view and pay online here:');
-      }
-    } else {
-      emailBody = generateTemplateEmail(customerName, orderName, totalPrice, products, invoiceUrl);
-      emailBody = emailBody.replace('You can view and pay your invoice here:', 'Your quote PDF is attached. You can also view and pay online here:');
-    }
-
-    // Step 3: Read PDF for attachment
-    const pdfPath = pdfResult.filepath;
-    const pdfBuffer = fs.readFileSync(pdfPath);
-    
-    // Step 4: Send email via Resend
-    console.log(`[Resend] Sending email to ${customerEmail}...`);
-    
-    const { data, error } = await resend.emails.send({
-      from: 'Glen at Phoenix Phase Converters <support@phoenixphaseconverters.com>',
-      to: [customerEmail],
-      subject: subject,
-      html: emailBody.replace(/\n/g, '<br>'),
-      text: emailBody,
-      attachments: [
-        {
-          filename: `Phoenix-Quote-${orderName}.pdf`,
-          content: pdfBuffer
-        }
-      ]
-    });
-
-    if (error) {
-      console.error('[Resend] Error:', error);
-      throw new Error(error.message || 'Failed to send email');
-    }
-    
-    console.log(`[Resend] Email sent successfully to ${customerEmail}, id: ${data.id}`);
-    
-    res.json({
-      success: true,
-      message: `Email sent to ${customerEmail}`,
-      to: customerEmail,
-      subject: subject,
-      invoiceNumber: invoiceData.invoiceNumber,
-      pdfFilename: pdfResult.filename,
-      emailId: data.id
-    });
-    
-  } catch (error) {
-    console.error('[Resend] Error:', error.message);
-    next(error);
-  }
-});
 
 /**
  * Batch convert multiple draft orders to invoices
