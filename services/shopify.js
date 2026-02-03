@@ -101,21 +101,38 @@ class ShopifyService {
   }
 
   /**
-   * Get draft orders - fetches 30 most recent by ID (newest first)
+   * Get draft orders - fetches up to 500 (2 pages), returns newest first
    */
   async getDraftOrders(params = {}) {
     const status = params.status || 'open';
     console.log(`[Shopify] Fetching draft orders (status: ${status})...`);
     
-    // Use order=id desc to get newest drafts (higher IDs = newer)
-    let endpoint = `/draft_orders.json?limit=30&order=id%20desc${status !== 'any' ? `&status=${status}` : ''}`;
+    let allDrafts = [];
+    let endpoint = `/draft_orders.json?limit=250${status !== 'any' ? `&status=${status}` : ''}`;
     
-    console.log(`[Shopify] Endpoint: ${endpoint}`);
-    const result = await this.requestWithHeaders('GET', endpoint);
-    const drafts = result.data.draft_orders || [];
+    // Page 1
+    console.log('[Shopify] Fetching page 1...');
+    const page1 = await this.requestWithHeaders('GET', endpoint);
+    allDrafts = page1.data.draft_orders || [];
+    console.log(`[Shopify] Page 1: ${allDrafts.length} drafts`);
     
-    console.log(`[Shopify] Got ${drafts.length} drafts`);
-    return { draft_orders: drafts };
+    // Page 2 (if exists)
+    const nextUrl = this.getNextPageUrl(page1.headers.link);
+    if (nextUrl) {
+      console.log('[Shopify] Fetching page 2...');
+      const urlObj = new URL(nextUrl);
+      const page2Endpoint = urlObj.pathname.replace('/admin/api/2024-01', '') + urlObj.search;
+      const page2 = await this.requestWithHeaders('GET', page2Endpoint);
+      const page2Drafts = page2.data.draft_orders || [];
+      allDrafts = allDrafts.concat(page2Drafts);
+      console.log(`[Shopify] Page 2: ${page2Drafts.length} drafts, total: ${allDrafts.length}`);
+    }
+    
+    // Sort newest first
+    allDrafts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    
+    console.log(`[Shopify] Returning ${allDrafts.length} drafts (newest first)`);
+    return { draft_orders: allDrafts };
   }
 
   /**
@@ -123,6 +140,130 @@ class ShopifyService {
    */
   async getDraftOrder(id) {
     return this.request('GET', `/draft_orders/${id}.json`);
+  }
+
+  /**
+   * Search for a draft order by name (e.g. #D2257)
+   */
+  async searchDraftByName(name) {
+    console.log(`[Shopify] Searching for draft order: ${name}`);
+    
+    // Shopify doesn't have direct name search, so we use the GraphQL API
+    const query = `
+      {
+        draftOrders(first: 1, query: "name:${name}") {
+          edges {
+            node {
+              id
+              legacyResourceId
+              name
+              email
+              totalPrice
+              createdAt
+              status
+              customer {
+                firstName
+                lastName
+                email
+                phone
+              }
+              lineItems(first: 50) {
+                edges {
+                  node {
+                    title
+                    quantity
+                    originalUnitPrice
+                    product {
+                      id
+                    }
+                  }
+                }
+              }
+              shippingAddress {
+                firstName
+                lastName
+                address1
+                address2
+                city
+                province
+                zip
+                country
+                phone
+              }
+              billingAddress {
+                firstName
+                lastName
+                address1
+                city
+                province
+                zip
+              }
+              subtotalPrice
+              totalTax
+              totalPrice
+              invoiceUrl
+              note2: note
+            }
+          }
+        }
+      }
+    `;
+    
+    try {
+      const token = await this.getAccessToken();
+      const response = await require('axios').post(
+        `https://${this.storeUrl}/admin/api/2024-01/graphql.json`,
+        { query },
+        {
+          headers: {
+            'X-Shopify-Access-Token': token,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      const edges = response.data?.data?.draftOrders?.edges;
+      if (edges && edges.length > 0) {
+        const node = edges[0].node;
+        
+        // Convert GraphQL response to REST format
+        const draftOrder = {
+          id: parseInt(node.legacyResourceId),
+          name: node.name,
+          email: node.email || node.customer?.email,
+          total_price: node.totalPrice,
+          created_at: node.createdAt,
+          status: node.status.toLowerCase(),
+          customer: node.customer ? {
+            first_name: node.customer.firstName,
+            last_name: node.customer.lastName,
+            email: node.customer.email,
+            phone: node.customer.phone
+          } : null,
+          line_items: node.lineItems.edges.map(e => ({
+            title: e.node.title,
+            quantity: e.node.quantity,
+            price: e.node.originalUnitPrice,
+            product_id: e.node.product?.id ? parseInt(e.node.product.id.split('/').pop()) : null
+          })),
+          shipping_address: node.shippingAddress,
+          billing_address: node.billingAddress,
+          subtotal_price: node.subtotalPrice,
+          total_tax: node.totalTax,
+          invoice_url: node.invoiceUrl,
+          note: node.note2
+        };
+        
+        console.log(`[Shopify] Found draft order: ${node.name}`);
+        return { draft_order: draftOrder };
+      }
+      
+      console.log(`[Shopify] Draft order not found: ${name}`);
+      return null;
+    } catch (error) {
+      console.error(`[Shopify] Search error:`, error.response?.data || error.message);
+      return null;
+    }
   }
 
   /**
