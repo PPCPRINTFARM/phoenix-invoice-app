@@ -118,39 +118,23 @@ class ShopifyService {
   }
 
   /**
-   * Get draft orders - fetches up to 500 (2 pages), returns newest first
+   * Get draft orders - fetches last 30, newest first (by updated_at)
    */
   async getDraftOrders(params = {}) {
     const status = params.status || 'open';
-    console.log(`[Shopify] Fetching draft orders (status: ${status})...`);
+    const limit = params.limit || 30;
+    console.log(`[Shopify] Fetching ${limit} draft orders (status: ${status})...`);
     
-    let allDrafts = [];
-    // Request newest first with order=created_at desc
-    let endpoint = `/draft_orders.json?limit=250&order=created_at%20desc${status !== 'any' ? `&status=${status}` : ''}`;
+    // Simple single request - no pagination needed for 30 drafts
+    let endpoint = `/draft_orders.json?limit=${limit}&order=updated_at%20desc${status !== 'any' ? `&status=${status}` : ''}`;
     
-    // Page 1
-    console.log('[Shopify] Fetching page 1...');
-    const page1 = await this.requestWithHeaders('GET', endpoint);
-    allDrafts = page1.data.draft_orders || [];
-    console.log(`[Shopify] Page 1: ${allDrafts.length} drafts`);
+    console.log(`[Shopify] Endpoint: ${endpoint}`);
+    const result = await this.requestWithHeaders('GET', endpoint);
+    const drafts = result.data.draft_orders || [];
     
-    // Page 2 (if exists)
-    const nextUrl = this.getNextPageUrl(page1.headers.link);
-    if (nextUrl) {
-      console.log('[Shopify] Fetching page 2...');
-      const urlObj = new URL(nextUrl);
-      const page2Endpoint = urlObj.pathname.replace('/admin/api/2024-01', '') + urlObj.search;
-      const page2 = await this.requestWithHeaders('GET', page2Endpoint);
-      const page2Drafts = page2.data.draft_orders || [];
-      allDrafts = allDrafts.concat(page2Drafts);
-      console.log(`[Shopify] Page 2: ${page2Drafts.length} drafts, total: ${allDrafts.length}`);
-    }
+    console.log(`[Shopify] Got ${drafts.length} drafts (newest first by updated_at)`);
     
-    // Sort newest first
-    allDrafts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    
-    console.log(`[Shopify] Returning ${allDrafts.length} drafts (newest first)`);
-    return { draft_orders: allDrafts };
+    return { draft_orders: drafts };
   }
 
   /**
