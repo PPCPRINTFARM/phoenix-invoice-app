@@ -10,7 +10,7 @@ const invoiceService = require('../services/invoice');
 const path = require('path');
 
 /**
- * Search for a draft order by quote number (e.g. D2257)
+ * Search for a draft order by quote number, customer name, or email
  */
 router.get('/draft-orders/search', async (req, res, next) => {
   try {
@@ -20,31 +20,54 @@ router.get('/draft-orders/search', async (req, res, next) => {
       return res.status(400).json({ success: false, error: 'Search query (q) required' });
     }
     
-    // Extract number from input (handles "2257", "D2257", "#D2257")
-    const num = q.replace(/[^0-9]/g, '');
-    const searchName = `#D${num}`;
+    const searchTerm = q.trim().toLowerCase();
     
-    console.log(`[API] Searching for draft order ${searchName}...`);
+    console.log(`[API] Searching for: ${searchTerm}...`);
     
-    // Fetch drafts and find by name
+    // Fetch drafts and search by name, customer name, or email
     const result = await shopifyService.getDraftOrders({ status: 'any' });
     const drafts = result.draft_orders || [];
     
-    const found = drafts.find(d => d.name === searchName);
+    const found = drafts.filter(d => {
+      // Match quote number (D2257, 2257, #D2257)
+      if (d.name && d.name.toLowerCase().includes(searchTerm.replace('#', '').replace('d', ''))) return true;
+      
+      // Match customer name
+      const customerName = `${d.customer?.first_name || ''} ${d.customer?.last_name || ''}`.toLowerCase();
+      if (customerName.includes(searchTerm)) return true;
+      
+      // Match email
+      if (d.email && d.email.toLowerCase().includes(searchTerm)) return true;
+      if (d.customer?.email && d.customer.email.toLowerCase().includes(searchTerm)) return true;
+      
+      // Match phone number (strip non-digits for comparison)
+      const searchDigits = searchTerm.replace(/\D/g, '');
+      if (searchDigits.length >= 4) {
+        const customerPhone = (d.customer?.phone || '').replace(/\D/g, '');
+        const shippingPhone = (d.shipping_address?.phone || '').replace(/\D/g, '');
+        const billingPhone = (d.billing_address?.phone || '').replace(/\D/g, '');
+        if (customerPhone.includes(searchDigits)) return true;
+        if (shippingPhone.includes(searchDigits)) return true;
+        if (billingPhone.includes(searchDigits)) return true;
+      }
+      
+      return false;
+    });
     
-    if (found) {
-      console.log(`[API] Found: ${found.name}`);
+    if (found.length > 0) {
+      console.log(`[API] Found ${found.length} matches`);
       res.json({
         success: true,
         found: true,
-        draftOrder: found
+        count: found.length,
+        draftOrders: found
       });
     } else {
-      console.log(`[API] Not found: ${searchName}`);
+      console.log(`[API] No matches for: ${searchTerm}`);
       res.json({
         success: true,
         found: false,
-        message: `Quote ${searchName} not found in last 50 drafts`
+        message: `No quotes found matching "${q}"`
       });
     }
   } catch (error) {
