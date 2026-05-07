@@ -1,0 +1,14 @@
+api_version = "2025-01"
+
+[[extensions]]
+name = "Phoenix PDF (Order)"
+handle = "order-pdf-action"
+type = "ui_extension"
+
+[[extensions.targeting]]
+module = "./src/OrderActionExtension.jsx"
+target = "admin.order-details.action.render"
+
+[[extensions.targeting]]
+module = "./src/OrderActionShouldRender.js"
+target = "admin.order-details.action.should-render"

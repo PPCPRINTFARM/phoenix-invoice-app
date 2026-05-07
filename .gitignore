@@ -6,3 +6,11 @@ invoices/
 assets/
 npm-debug.log*
 .DS_Store
+
+# Shopify CLI
+.shopify/
+extensions/*/dist/
+extensions/*/node_modules/
+shopify.app.*.toml
+!shopify.app.toml
+

@@ -1,0 +1,12 @@
+{
+  "name": "order-pdf-action",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Phoenix Phase Converters - Download PDF action on Shopify admin order details page",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@shopify/ui-extensions": "2025.1.x",
+    "@shopify/ui-extensions-react": "2025.1.x",
+    "react": "^18.2.0"
+  }
+}

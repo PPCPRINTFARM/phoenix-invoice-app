@@ -1,0 +1,37 @@
+# Shopify App configuration for Phoenix Phase Converters
+#
+# This is a TEMPLATE. Replace placeholders before running `shopify app deploy`.
+# After running `shopify app config link` (or `shopify app init`), Shopify CLI
+# will populate `client_id` and `application_url` automatically.
+#
+# Docs: https://shopify.dev/docs/apps/tools/cli/configuration
+
+name = "phoenix-invoice-app"
+handle = "phoenix-invoice-app"
+client_id = "REPLACE_WITH_PARTNER_APP_CLIENT_ID"
+application_url = "https://phoenix-invoice-app.onrender.com"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = false
+include_config_on_deploy = true
+
+[webhooks]
+api_version = "2025-01"
+
+[access_scopes]
+# Comma-separated scopes required by the Phoenix invoice/quote PDF flow.
+scopes = "read_orders,read_draft_orders,read_customers,read_products"
+# If you also need to read orders older than 60 days, add `read_all_orders`
+# (requires Shopify Plus or app review approval).
+# scopes = "read_orders,read_draft_orders,read_customers,read_products,read_all_orders"
+
+[auth]
+redirect_urls = [
+  "https://phoenix-invoice-app.onrender.com/auth/callback",
+  "https://phoenix-invoice-app.onrender.com/auth/shopify/callback",
+  "https://phoenix-invoice-app.onrender.com/api/auth/callback"
+]
+
+[pos]
+embedded = false

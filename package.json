@@ -5,7 +5,11 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "shopify": "shopify",
+    "shopify:dev": "shopify app dev",
+    "shopify:deploy": "shopify app deploy",
+    "shopify:link": "shopify app config link"
   },
   "dependencies": {
     "@shopify/shopify-api": "^8.0.0",

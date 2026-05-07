@@ -1,0 +1,14 @@
+api_version = "2025-01"
+
+[[extensions]]
+name = "Phoenix PDF (Draft Order)"
+handle = "draft-order-pdf-action"
+type = "ui_extension"
+
+[[extensions.targeting]]
+module = "./src/DraftOrderActionExtension.jsx"
+target = "admin.draft-order-details.action.render"
+
+[[extensions.targeting]]
+module = "./src/DraftOrderActionShouldRender.js"
+target = "admin.draft-order-details.action.should-render"
