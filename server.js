@@ -88,11 +88,15 @@ app.listen(PORT, () => {
 ╚═══════════════════════════════════════════════════════════╝
   `);
   
-  // Initialize webhooks on startup
-  const shopifyService = require('./services/shopify');
-  shopifyService.registerWebhooks().catch(err => {
-    console.error('Failed to register webhooks:', err.message);
-  });
+  // Initialize webhooks on startup (skip when auth or APP_URL aren't configured)
+  if (process.env.APP_URL && (process.env.SHOPIFY_TOKEN || process.env.SHOPIFY_CLIENT_ID)) {
+    const shopifyService = require('./services/shopify');
+    shopifyService.registerWebhooks().catch(err => {
+      console.error('Failed to register webhooks:', err.message);
+    });
+  } else {
+    console.log('[startup] Skipping webhook registration (set APP_URL + SHOPIFY_TOKEN to enable)');
+  }
 });
 
 module.exports = app;

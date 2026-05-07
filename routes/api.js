@@ -7,7 +7,106 @@ const express = require('express');
 const router = express.Router();
 const shopifyService = require('../services/shopify');
 const invoiceService = require('../services/invoice');
+const lookupService = require('../services/lookup');
 const path = require('path');
+
+/**
+ * Unified lookup endpoint.
+ * Body: { q: string, mode?: 'auto'|'order'|'draft' }
+ * Returns metadata about the order/draft and a downloadUrl.
+ */
+async function handleLookup(req, res, next) {
+  try {
+    const q = (req.body?.q || req.query?.q || '').toString().trim();
+    const mode = (req.body?.mode || req.query?.mode || 'auto').toString();
+    if (!q) return res.status(400).json({ success: false, error: 'Missing query (q)' });
+
+    const result = await lookupService.lookup(q, mode);
+    const r = result.record;
+
+    const summary = {
+      type: result.type, // 'order' | 'draft'
+      label: result.type === 'order' ? 'Invoice' : 'Quote',
+      number: r.name,
+      id: r.legacyResourceId || r.id,
+      gid: r.id,
+      createdAt: r.createdAt || r.processedAt,
+      total: parseFloat(r.currentTotalPriceSet?.shopMoney?.amount || r.totalPriceSet?.shopMoney?.amount || 0),
+      currency: (r.currentTotalPriceSet?.shopMoney?.currencyCode || r.totalPriceSet?.shopMoney?.currencyCode || 'USD'),
+      financialStatus: r.displayFinancialStatus || null,
+      fulfillmentStatus: r.displayFulfillmentStatus || null,
+      draftStatus: r.status || null,
+      invoiceUrl: r.invoiceUrl || null,
+      customer: r.customer?.displayName ||
+        [r.customer?.firstName, r.customer?.lastName].filter(Boolean).join(' ') ||
+        r.billingAddress?.name || null,
+      email: r.customer?.email || r.email || null,
+    };
+
+    const idForUrl = r.legacyResourceId || encodeURIComponent(r.id);
+    const downloadUrl = `/api/pdf/${result.type}/${idForUrl}`;
+
+    res.json({
+      success: true,
+      type: result.type,
+      summary,
+      downloadUrl,
+      candidates: result.candidates ? result.candidates.length : 1,
+    });
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: err.message });
+    if (err.code === 'SHOPIFY_AUTH_MISSING') {
+      return res.status(500).json({ success: false, error: 'Shopify auth missing — set SHOPIFY_TOKEN in environment.' });
+    }
+    next(err);
+  }
+}
+
+router.post('/lookup', handleLookup);
+router.get('/lookup', handleLookup);
+
+/**
+ * GET /api/pdf/:type/:id
+ * Streams a PDF for either an order or a draft order.
+ *   :type = 'order' | 'draft'
+ *   :id   = legacyResourceId (numeric) or url-encoded GraphQL gid
+ */
+router.get('/pdf/:type/:id', async (req, res, next) => {
+  try {
+    const { type, id } = req.params;
+    if (!['order', 'draft'].includes(type)) {
+      return res.status(400).json({ success: false, error: 'type must be order or draft' });
+    }
+
+    // Build a gid the lookup service can use
+    let queryInput;
+    if (id.startsWith('gid%3A%2F%2F') || id.startsWith('gid://')) {
+      queryInput = decodeURIComponent(id);
+    } else if (/^\d+$/.test(id)) {
+      queryInput = type === 'draft'
+        ? `gid://shopify/DraftOrder/${id}`
+        : `gid://shopify/Order/${id}`;
+    } else {
+      queryInput = id;
+    }
+
+    const result = await lookupService.lookup(queryInput, type);
+    const normalized = result.type === 'order'
+      ? lookupService.normalizeOrder(result.record)
+      : lookupService.normalizeDraft(result.record);
+
+    const filename = `${result.type === 'order' ? 'Invoice' : 'Quote'}-${(normalized.name || '').replace(/[^A-Za-z0-9-]/g, '')}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    await invoiceService.renderPdf(normalized, res);
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: err.message });
+    if (err.code === 'SHOPIFY_AUTH_MISSING') {
+      return res.status(500).json({ success: false, error: 'Shopify auth missing — set SHOPIFY_TOKEN in environment.' });
+    }
+    next(err);
+  }
+});
 
 /**
  * Search for a draft order by quote number, customer name, or email

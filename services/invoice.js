@@ -472,6 +472,215 @@ class InvoiceService {
     });
   }
 
+  /**
+   * Render a normalized record (from services/lookup.js) directly to a writable
+   * stream. Handles both kinds:
+   *   - record.kind === 'order': PAID INVOICE (or balance-due invoice)
+   *   - record.kind === 'draft': QUOTE / unpaid invoice with Complete Purchase link
+   *
+   * The caller is responsible for setting response headers if streaming to HTTP.
+   */
+  async renderPdf(record, writeStream) {
+    const isOrder = record.kind === 'order';
+    const isPaid = isOrder && /paid/i.test(record.financialStatus || '');
+    const titleText = isOrder ? (isPaid ? 'PAID INVOICE' : 'INVOICE') : 'QUOTE';
+
+    const doc = new PDFDocument({ size: 'LETTER', margin: 40, autoFirstPage: true });
+    doc.pipe(writeStream);
+
+    const pageWidth = 612;
+    const margin = 40;
+    const contentWidth = pageWidth - margin * 2;
+    const navy = this.colors.navyBlue;
+    const orange = this.colors.orange;
+
+    // ===== HEADER =====
+    const logoUrl = 'https://cdn.shopify.com/s/files/1/0680/2538/5243/files/ppc-email-logo.png?v=1771953803';
+    try {
+      const logoPath = await this.downloadImage(logoUrl, 'ppc-email-logo.png');
+      if (logoPath && fs.existsSync(logoPath)) {
+        doc.image(logoPath, margin, 35, { width: 180 });
+      } else {
+        doc.font('Helvetica-Bold').fontSize(24).fillColor(navy).text('PHOENIX', margin, 40);
+        doc.font('Helvetica').fontSize(10).fillColor(orange).text('PHASE CONVERTERS', margin, 65);
+      }
+    } catch (e) {
+      doc.font('Helvetica-Bold').fontSize(24).fillColor(navy).text('PHOENIX', margin, 40);
+      doc.font('Helvetica').fontSize(10).fillColor(orange).text('PHASE CONVERTERS', margin, 65);
+    }
+
+    // Right-side meta block
+    const rightCol = pageWidth - margin - 200;
+    doc.font('Helvetica').fontSize(10).fillColor(this.colors.textDark);
+    doc.text(`${isOrder ? 'Order' : 'Quote'} #: ${record.quoteNumber || record.name || ''}`, rightCol, 45, { width: 200, align: 'right' });
+    doc.text(`Date: ${record.quoteDate || ''}`, rightCol, 60, { width: 200, align: 'right' });
+    if (!isOrder && record.validUntil) {
+      doc.text(`Valid Until: ${record.validUntil}`, rightCol, 75, { width: 200, align: 'right' });
+    }
+    if (isOrder && record.financialStatus) {
+      doc.font('Helvetica-Bold').fontSize(10).fillColor(isPaid ? this.colors.green : orange)
+         .text(`Status: ${record.financialStatus}`, rightCol, 75, { width: 200, align: 'right' });
+    }
+
+    // ===== TITLE BAR =====
+    let y = 100;
+    doc.rect(margin, y, contentWidth, 32).fill(orange);
+    doc.font('Helvetica-Bold').fontSize(20).fillColor('#ffffff')
+       .text(titleText, margin, y + 7, { width: contentWidth, align: 'center' });
+
+    // ===== BILL TO / SHIP TO =====
+    y += 50;
+    const cardW = (contentWidth - 20) / 2;
+
+    drawAddressCard.call(this, doc, margin, y, cardW, 'Bill To', record.customer);
+    drawAddressCard.call(this, doc, margin + cardW + 20, y, cardW, 'Ship To', record.shipping);
+
+    // ===== LINE ITEMS =====
+    y += 130;
+    doc.rect(margin, y, contentWidth, 24).fill(navy);
+    doc.font('Helvetica-Bold').fontSize(9).fillColor('#ffffff');
+    doc.text('Product', margin + 10, y + 8);
+    doc.text('QTY', margin + 320, y + 8, { width: 50, align: 'center' });
+    doc.text('PRICE', margin + 380, y + 8, { width: 60, align: 'center' });
+    doc.text('TOTAL', margin + 450, y + 8, { width: 70, align: 'right' });
+    y += 24;
+
+    for (let i = 0; i < (record.lineItems || []).length; i++) {
+      const item = record.lineItems[i];
+      const rowH = 36;
+      if (y + rowH > 720) { doc.addPage(); y = 50; }
+      if (i % 2 === 1) doc.rect(margin, y, contentWidth, rowH).fill('#f8fafc');
+      doc.font('Helvetica-Bold').fontSize(9).fillColor(this.colors.textDark)
+         .text(item.title || '', margin + 10, y + 6, { width: 290 });
+      if (item.sku) {
+        doc.font('Helvetica').fontSize(8).fillColor(this.colors.textMuted)
+           .text(`SKU: ${item.sku}`, margin + 10, y + 20, { width: 290 });
+      }
+      doc.font('Helvetica').fontSize(10).fillColor(this.colors.textDark)
+         .text(String(item.quantity), margin + 320, y + 12, { width: 50, align: 'center' })
+         .text(this.formatCurrency(item.price), margin + 380, y + 12, { width: 60, align: 'center' })
+         .text(this.formatCurrency(item.total), margin + 450, y + 12, { width: 70, align: 'right' });
+      y += rowH;
+    }
+
+    doc.moveTo(margin, y).lineTo(margin + contentWidth, y)
+       .strokeColor(this.colors.borderGray).lineWidth(1).stroke();
+
+    // ===== TOTALS =====
+    y += 12;
+    const labelX = margin + 320;
+    const valueX = margin + 450;
+    const writeRow = (label, value, opts = {}) => {
+      doc.font(opts.bold ? 'Helvetica-Bold' : 'Helvetica')
+         .fontSize(opts.size || 10)
+         .fillColor(opts.color || this.colors.textDark);
+      doc.text(label, labelX, y, { width: 130 });
+      doc.text(value, valueX, y, { width: 90, align: 'right' });
+      y += opts.gap || 16;
+    };
+
+    writeRow('Subtotal:', this.formatCurrency(record.subtotal || 0));
+    if (record.discountAmount > 0) {
+      writeRow(`${record.discountTitle || 'Discount'}:`, '-' + this.formatCurrency(record.discountAmount), { color: this.colors.green });
+    }
+    writeRow(`${record.shippingTitle || 'Shipping'}:`,
+      record.shippingCost > 0 ? this.formatCurrency(record.shippingCost) : 'Free');
+    if (record.taxAmount > 0) writeRow('Tax:', this.formatCurrency(record.taxAmount));
+
+    y += 6;
+    writeRow('Total:', this.formatCurrency(record.total || 0), { bold: true, size: 13, color: navy, gap: 20 });
+
+    if (isOrder && record.totalReceived !== undefined) {
+      if (record.totalReceived > 0) {
+        writeRow('Amount Paid:', this.formatCurrency(record.totalReceived), { color: this.colors.green });
+      }
+      if (record.balanceDue > 0) {
+        writeRow('Balance Due:', this.formatCurrency(record.balanceDue), { bold: true, color: this.colors.red });
+      }
+    }
+
+    // ===== PAYMENT / QR =====
+    y += 12;
+    if (!isOrder && record.invoiceUrl) {
+      // QR + Complete Purchase link for quotes
+      const qrX = pageWidth - margin - 100;
+      try {
+        const qrDataUrl = await QRCode.toDataURL(record.invoiceUrl, {
+          width: 100, margin: 1, color: { dark: navy, light: '#ffffff' },
+        });
+        const qrBuffer = Buffer.from(qrDataUrl.split(',')[1], 'base64');
+        doc.image(qrBuffer, qrX, y, { width: 100, height: 100 });
+      } catch (e) {
+        doc.rect(qrX, y, 100, 100).strokeColor(navy).lineWidth(1).stroke();
+      }
+      doc.font('Helvetica-Bold').fontSize(9).fillColor(navy)
+         .text('SCAN TO PAY', qrX, y + 105, { width: 100, align: 'center' });
+
+      doc.font('Helvetica-Bold').fontSize(11).fillColor(orange)
+         .text('Complete Purchase Online:', margin, y);
+      doc.font('Helvetica').fontSize(8).fillColor(navy)
+         .text(record.invoiceUrl, margin, y + 18, { width: pageWidth - margin * 2 - 120, link: record.invoiceUrl, underline: true });
+    } else if (isOrder && isPaid) {
+      doc.rect(margin, y, contentWidth, 28).fill('#dcfce7');
+      doc.font('Helvetica-Bold').fontSize(13).fillColor(this.colors.green)
+         .text('PAYMENT RECEIVED — THANK YOU!', margin, y + 7, { width: contentWidth, align: 'center' });
+      y += 28;
+    }
+
+    // ===== NOTES & FOOTER =====
+    y += 130;
+    if (y > 720) { doc.addPage(); y = 50; }
+
+    if (record.note) {
+      doc.font('Helvetica-Bold').fontSize(9).fillColor(navy).text('Order Notes:', margin, y);
+      y += 12;
+      doc.font('Helvetica').fontSize(9).fillColor(this.colors.textDark)
+         .text(record.note, margin, y, { width: contentWidth });
+      y += 30;
+    }
+
+    doc.rect(margin, y, contentWidth, 18).fill(navy);
+    doc.font('Helvetica-Bold').fontSize(9).fillColor('#ffffff').text('WHY PHOENIX?', margin + 10, y + 5);
+    y += 24;
+    doc.font('Helvetica').fontSize(9).fillColor(this.colors.textDark);
+    for (const note of record.invoiceNotes || []) {
+      doc.text('• ' + note, margin + 10, y, { width: contentWidth - 20 });
+      y += 13;
+    }
+
+    // Footer
+    y = 760;
+    doc.font('Helvetica').fontSize(8).fillColor(this.colors.textMuted);
+    doc.text(`${record.company.name} — ${record.company.address}, ${record.company.city}`,
+      margin, y, { width: contentWidth, align: 'center' });
+    doc.text(`${record.company.phone}  |  ${record.company.email}  |  ${record.company.website}`,
+      margin, y + 12, { width: contentWidth, align: 'center' });
+
+    doc.end();
+
+    function drawAddressCard(doc, x, y, w, label, addr) {
+      doc.rect(x, y, w, 110).fill(this.colors.lightBlue);
+      doc.font('Helvetica-Bold').fontSize(10).fillColor(navy).text(label, x + 10, y + 8);
+      doc.font('Helvetica-Bold').fontSize(10).fillColor(this.colors.textDark)
+         .text(addr.name || '', x + 10, y + 24, { width: w - 20 });
+      doc.font('Helvetica').fontSize(9).fillColor(this.colors.textDark);
+      let cy = y + 40;
+      const lines = [
+        addr.company,
+        addr.address1,
+        [addr.city, addr.state, addr.zip].filter(Boolean).join(', '),
+        addr.country,
+        addr.phone,
+        addr.email,
+      ].filter(Boolean);
+      for (const line of lines) {
+        doc.text(line, x + 10, cy, { width: w - 20, ellipsis: true });
+        cy += 12;
+        if (cy > y + 100) break;
+      }
+    }
+  }
+
   getInvoice(invoiceNumber) {
     const filepath = path.join(this.invoiceDir, `${invoiceNumber}.pdf`);
     if (fs.existsSync(filepath)) {

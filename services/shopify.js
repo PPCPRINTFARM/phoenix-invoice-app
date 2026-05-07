@@ -18,12 +18,24 @@ class ShopifyService {
   }
 
   async getAccessToken() {
+    // Prefer a static admin token when provided (Render env: SHOPIFY_TOKEN)
+    const staticToken = process.env.SHOPIFY_TOKEN ||
+      process.env.SHOPIFY_ADMIN_TOKEN ||
+      process.env.SHOPIFY_ACCESS_TOKEN;
+    if (staticToken) return staticToken;
+
     if (this.accessToken && this.tokenExpiry && Date.now() < this.tokenExpiry - 300000) {
       return this.accessToken;
     }
 
+    if (!this.clientId || !this.clientSecret) {
+      throw Object.assign(new Error('Shopify auth missing: set SHOPIFY_TOKEN or SHOPIFY_CLIENT_ID/SECRET'), {
+        code: 'SHOPIFY_AUTH_MISSING',
+      });
+    }
+
     console.log('[Shopify] Fetching new access token...');
-    
+
     try {
       const response = await axios.post(
         `https://${this.storeUrl}/admin/oauth/access_token`,
